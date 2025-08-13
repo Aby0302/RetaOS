@@ -118,4 +118,61 @@ Bu proje MIT lisansı ile lisanslanmıştır.
 - Grafik modunda çalıştırmayı deneyin: `./run.sh gfx`
 - Seri konsol modunu deneyin: `./run.sh serial`
 
+## Mevcut Özellikler (Teknik)
+
+- Boot ve Çekirdek
+  - Multiboot uyumlu önyükleme (GRUB)
+  - 32-bit protected mode; GDT ile kod/veri segmentleri (gdt.c, gdt_flush.S)
+- Kesme Altyapısı
+  - 256 girişli IDT kurulumu (idt.c, idt_load.S)
+  - PIC yeniden eşleme (0x20/0x28) ve EOI yönetimi
+  - IRQ0: PIT 100 Hz zamanlayıcı; IRQ1: klavye kesmesi
+  - Temel sayfa hatası (Page Fault, ISR14) yakalama kancası
+  - `irq_install_handler`, `interrupts_enable/disable` yardımcıları
+- Zamanlayıcı ve G/Ç
+  - PIT 100 Hz tick sayacı; her 100 tick’te seri porta log
+  - VGA metin modu (80x25) terminal: basit yazı, satır sonu, ekran temizleme
+  - Seri port (COM1, 115200): metin/hex/decimal yazma yardımcıları
+- Build ve Çalıştırma
+  - ISO üretimi (Makefile, `linker.ld`)
+  - QEMU ile grafik/seri modda çalışma; debug modu (GDB, port 1234)
+
+## Planlanan Özellikler ve Yapılacaklar
+
+- Bellek Yönetimi
+  - [ ] Multiboot bellek haritasını okuma ve doğrulama
+  - [ ] Fiziksel bellek yöneticisi (frame allocator)
+  - [ ] Sanal bellek/paging etkinleştirme (PDE/PTE) ve CR3 yönetimi
+  - [ ] Basit kernel heap (`kmalloc`/`kfree`)
+  - [ ] Page Fault detaylı raporlama ve kurtarma stratejisi
+- Kesme/İstisna
+  - [ ] Tüm CPU istisnaları için açıklayıcı handler’lar
+  - [ ] Ortak `panic()` altyapısı ve hata ekranı (stack dump, kayıtlar)
+- Zamanlayıcı ve Görevler
+  - [ ] TSS kurulumu ve bağlam değiştirme (context switch)
+  - [ ] Basit zamanlayıcı (Round-Robin) ile çoklu görev
+- Sürücüler ve G/Ç
+  - [ ] Klavye sürücüsü: scancode → ASCII dönüştürme, halka tampon
+  - [ ] VGA terminal: kaydırma, renkler, `printf` benzeri biçimlendirme
+  - [ ] Temel depolama (ATA/ATAPI) okuma ve blok cihaz soyutlaması
+  - [ ] APIC/HPET ve ACPI tabanlı başlatma (orta/uzun vade)
+- Dosya Sistemi
+  - [ ] Basit initrd/tarfs yükleyici
+  - [ ] VFS taslağı ve path çözümleme
+- Sistem Çağrıları ve Kullanıcı Modu
+  - [ ] Syscall giriş/çıkış ABI’si
+  - [ ] Kullanıcı modu süreç başlatma altyapısı (uzun vadeli)
+- Araçlar, Build ve Test
+  - [ ] Çapraz derleyici dokümantasyonu (i686-elf) ve opsiyonel kullanımı
+  - [ ] CI scriptleri ve otomatik QEMU testleri (headless)
+  - [ ] Gelişmiş debug rehberi (GDB betikleri, breakpoint önerileri)
+- Dokümantasyon
+  - [ ] Mimarinin genel resmi (boot → kernel → kesmeler → sürücüler)
+  - [ ] Kod yapısı, katkı rehberi ve tarz kuralları
+
+- Önceliklendirme (ilk hedefler)
+  - [ ] Bellek yönetimi (MMU/paging + frame allocator)
+  - [ ] İstisna handler’ları ve `panic()`
+  - [ ] Terminal geliştirmeleri ve klavye girişi
+
 ---
