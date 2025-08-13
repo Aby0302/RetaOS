@@ -1,23 +1,35 @@
-/* RetaOS - bootstrap (GAS, Multiboot v1) */
-.set ALIGN,1<<0
-.set MEMINFO,1<<1
-.set FLAGS,ALIGN|MEMINFO
-.set MAGIC,0x1BADB002
-.set CHECKSUM,-(MAGIC+FLAGS)
-.section .multiboot
-.align 4
-.long MAGIC
-.long FLAGS
-.long CHECKSUM
-.section .bss
-.align 16
-stack_bottom: .skip 16384
+; RetaOS - bootstrap (NASM, Multiboot v1)
+%define ALIGN    1<<0
+%define MEMINFO  1<<1
+%define FLAGS    ALIGN|MEMINFO
+%define MAGIC    0x1BADB002
+%define CHECKSUM 0xE4524FFB
+
+section .multiboot
+align 4
+    dd MAGIC
+    dd FLAGS
+    dd CHECKSUM
+
+section .bss
+align 16
+stack_bottom:
+    resb 16384  ; 16 KB
 stack_top:
-.section .text
-.global _start
-.type _start,@function
+
+section .text
+global _start
+extern kernel_main
+
 _start:
-  mov $stack_top,%esp
-  call kernel_main
-1:cli; hlt; jmp 1b
-.size _start, . - _start
+    ; Set up stack
+    mov esp, stack_top
+    
+    ; Call kernel main
+    call kernel_main
+    
+    ; Halt the CPU
+    cli
+.hang:
+    hlt
+    jmp .hang
