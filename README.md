@@ -29,5 +29,3 @@ Katkıda bulunmak istiyorsanız, lütfen bir pull request gönderin veya bir iss
 Bu proje MIT lisansı ile lisanslanmıştır.
 
 ---
-
-Onay verirseniz bu içeriği README.md dosyasına ekleyebilirim. Onaylıyor musunuz?
