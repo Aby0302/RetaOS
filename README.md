@@ -64,24 +64,40 @@ make clean
 
 ```
 RetaOS/
-├── boot.s          # Bootstrap kodu (Multiboot)
-├── kernel.c        # Ana kernel kodu
-├── linker.ld       # Linker script
-├── Makefile        # Build sistemi
-├── run.sh          # Çalıştırma scripti
-└── build/          # Derleme çıktıları
-    ├── kernel.bin  # Binary kernel
-    ├── kernel.elf  # ELF kernel
-    └── retaos.iso  # Boot edilebilir ISO
+├── linker.ld         # Linker script
+├── Makefile          # Build sistemi
+├── run.sh            # Çalıştırma scripti
+├── src/
+│   ├── kernel/
+│   │   └── kernel.c                # Ana kernel kodu
+│   ├── arch/
+│   │   └── x86/
+│   │       ├── boot/
+│   │       │   ├── boot.s          # Multiboot v1 giriş (ENTRY=_start)
+│   │       │   └── boot2.S         # Multiboot v2 giriş (opsiyonel)
+│   │       ├── gdt/
+│   │       │   ├── gdt.c           # GDT kurulum
+│   │       │   └── gdt_flush.S     # GDT yükleme (lgdt, segment yükleme)
+│   │       └── interrupts/
+│   │           ├── idt.c           # IDT kurulum ve IRQ dispatcher
+│   │           ├── idt_load.S      # IDT yükleme (lidt)
+│   │           └── isr.S           # ISR/IRQ stub’ları
+│   └── drivers/
+│       └── serial/
+│           └── serial.c            # COM1 sürücüsü
+└── build/            # Derleme çıktıları
+    ├── kernel.bin    # Binary kernel
+    ├── kernel.elf    # ELF kernel
+    └── retaos.iso    # Boot edilebilir ISO
 ```
 
 ## Geliştirme
 
 ### Yeni Özellik Ekleme
 
-1. Kernel kodunu `kernel.c` dosyasında düzenleyin
+1. İlgili modül altında kodu düzenleyin (örn. `src/kernel/kernel.c`, `src/arch/x86/interrupts/idt.c`)
 2. `make clean && make all` ile yeniden derleyin
-3. `./run.sh gfx` ile test edin
+3. `make run-gfx` veya `./run.sh gfx` ile test edin
 
 ### Debug
 

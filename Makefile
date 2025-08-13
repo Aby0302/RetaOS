@@ -14,13 +14,30 @@ LDFLAGS = -m elf_i386 -T linker.ld
 
 # Directories
 BUILD_DIR = build
-SRC_DIR = .
+SRC_DIR = src
 
 # Source files
-KERNEL_SOURCES = kernel.c gdt.c idt.c isr.c serial.c
-ASM_NASM_SOURCES = boot.s
-ASM_GAS_SOURCES = gdt_flush.S idt_load.S
-OBJECTS = $(KERNEL_SOURCES:.c=.o) $(ASM_NASM_SOURCES:.s=.o) $(ASM_GAS_SOURCES:.S=.o) isr_stub.o
+C_SOURCES = \
+	src/kernel/kernel.c \
+	src/arch/x86/gdt/gdt.c \
+	src/arch/x86/interrupts/idt.c \
+	src/arch/x86/interrupts/isr.c \
+	src/drivers/serial/serial.c
+
+ASM_NASM_SOURCES = \
+	src/arch/x86/boot/boot.s
+
+ASM_GAS_SOURCES = \
+	src/arch/x86/boot/boot2.S \
+	src/arch/x86/gdt/gdt_flush.S \
+	src/arch/x86/interrupts/idt_load.S
+
+# Objects
+OBJ_C   = $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(C_SOURCES))
+OBJ_NAS = $(patsubst %.s,$(BUILD_DIR)/obj/%.o,$(ASM_NASM_SOURCES))
+OBJ_GAS = $(patsubst %.S,$(BUILD_DIR)/obj/%.o,$(ASM_GAS_SOURCES))
+ISR_STUB_OBJ = $(BUILD_DIR)/obj/src/arch/x86/interrupts/isr_stub.o
+OBJECTS = $(OBJ_C) $(OBJ_NAS) $(OBJ_GAS) $(ISR_STUB_OBJ)
 
 # Target files
 KERNEL_BIN = $(BUILD_DIR)/kernel.bin
@@ -35,19 +52,23 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Compile C files
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+$(BUILD_DIR)/obj/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I . -c $< -o $@
 
 # Assemble NASM assembly files (.s)
-%.o: %.s
+$(BUILD_DIR)/obj/%.o: %.s
+	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
 # Assemble GAS assembly files (.S)
-%.o: %.S
+$(BUILD_DIR)/obj/%.o: %.S
+	@mkdir -p $(dir $@)
 	$(CC) -m32 -c $< -o $@
 
 # Special rule: build ISR stubs with a unique object name
-isr_stub.o: isr.S
+$(ISR_STUB_OBJ): src/arch/x86/interrupts/isr.S
+	@mkdir -p $(dir $@)
 	$(CC) -m32 -c $< -o $@
 
 # Link kernel
@@ -66,7 +87,7 @@ $(ISO_FILE): $(KERNEL_ELF)
 	echo '    multiboot /boot/kernel.elf' >> $(BUILD_DIR)/iso/boot/grub/grub.cfg
 	echo '    boot' >> $(BUILD_DIR)/iso/boot/grub/grub.cfg
 	echo '}' >> $(BUILD_DIR)/iso/boot/grub/grub.cfg
-	grub-mkrescue -o $@ $(BUILD_DIR)/iso
+	grub-mkrescue -o $@ $(BUILD_DIR)/iso | cat
 
 # Run in QEMU
 run: $(ISO_FILE)
