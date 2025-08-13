@@ -1,0 +1,7 @@
+
+i686-elf-tools-linux.zip
+*.iso
+*.bin
+*.elf
+build/
+*.o
