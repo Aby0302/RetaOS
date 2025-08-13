@@ -1,8 +1,9 @@
 // Minimal kernel for RetaOS
-#include "include/serial.h"
-#include "include/gdt.h"
-#include "include/idt.h"
-#include "include/isr.h"
+#include "include/drivers/serial.h"
+#include "include/arch/x86/gdt.h"
+#include "include/arch/x86/idt.h"
+#include "include/arch/x86/isr.h"
+#include "include/drivers/keyboard.h"
 
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
@@ -83,14 +84,35 @@ static void writes(const char* d) {
     write(d, strlen_(d));
 }
 
+// Forward declarations for memory init (implemented in new modules)
+void mb_parse_and_init(uint32_t multiboot_magic, uint32_t multiboot_info_addr);
+void paging_init(void);
+void kheap_init(void);
+void* kmalloc(unsigned long size);
+
+// Terminal enhancements
+static void term_scroll(void){
+    if (r < H) return;
+    for (size_t y = 1; y < H; y++){
+        for (size_t x = 0; x < W; x++){
+            buf[(y-1)*W + x] = buf[y*W + x];
+        }
+    }
+    for (size_t x = 0; x < W; x++) buf[(H-1)*W + x] = vga_entry(' ', col);
+    r = H - 1;
+}
+static void set_color(enum vga_color fg, enum vga_color bg){ col = vga_entry_color(fg, bg); }
+static void puts_(const char* s){ writes(s); }
+
 // Main kernel function
-void kernel_main(void) {
+void kernel_main(uint32_t mb_magic, uint32_t mb_info_addr) {
     // Early serial for debugging
     serial_init();
     serial_write("[RetaOS] Serial initialized.\n");
 
     // VGA init
     term_init();
+    set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     writes("Welcome to RetaOS!\n");
 
     // Setup GDT and IDT
@@ -100,13 +122,28 @@ void kernel_main(void) {
     idt_init();
     serial_write("[RetaOS] IDT loaded.\n");
 
+    // Multiboot memory map and physical memory manager init
+    mb_parse_and_init(mb_magic, mb_info_addr);
+
+    // Enable basic paging
+    paging_init();
+
+    // Initialize simple kernel heap
+    kheap_init();
+    // Demo: allocate a few blocks
+    void* a = kmalloc(32);
+    void* b = kmalloc(128);
+    serial_write("[Heap] kmalloc a="); serial_write_hex((unsigned int)(unsigned long)a); serial_write(" b="); serial_write_hex((unsigned int)(unsigned long)b); serial_write("\n");
+
+    // Keyboard init
+    keyboard_init();
+
     // Install basic IRQs (timer+keyboard), then enable interrupts
     irq_init_basic();
     interrupts_enable();
     serial_write("[RetaOS] IRQs enabled.\n");
 
-    writes("Minimal multiboot kernel is up.\n");
-    writes("System is running successfully!\n");
+    puts_("Type on keyboard; characters are buffered.\n");
     
     // Halt the CPU
     for (;;) {

@@ -108,32 +108,6 @@ Debug modunda çalıştırmak için:
 
 Bu mod QEMU'yu debugger ile başlatır (port 1234).
 
-## Katkıda Bulunmak
-
-Katkıda bulunmak istiyorsanız:
-1. Fork yapın
-2. Feature branch oluşturun
-3. Değişikliklerinizi commit edin
-4. Pull request gönderin
-
-## Lisans
-
-Bu proje MIT lisansı ile lisanslanmıştır.
-
-## Sorun Giderme
-
-### Derleme Hataları
-- Tüm gereksinimlerin yüklü olduğundan emin olun
-- `make clean` ile temizlik yapın
-
-### QEMU Çalışmıyor
-- QEMU'nun yüklü olduğunu kontrol edin
-- ISO dosyasının oluşturulduğunu kontrol edin
-
-### Ekran Çıktısı Yok
-- Grafik modunda çalıştırmayı deneyin: `./run.sh gfx`
-- Seri konsol modunu deneyin: `./run.sh serial`
-
 ## Mevcut Özellikler (Teknik)
 
 - Boot ve Çekirdek
@@ -156,14 +130,14 @@ Bu proje MIT lisansı ile lisanslanmıştır.
 ## Planlanan Özellikler ve Yapılacaklar
 
 - Bellek Yönetimi
-  - [ ] Multiboot bellek haritasını okuma ve doğrulama
-  - [ ] Fiziksel bellek yöneticisi (frame allocator)
-  - [ ] Sanal bellek/paging etkinleştirme (PDE/PTE) ve CR3 yönetimi
-  - [ ] Basit kernel heap (`kmalloc`/`kfree`)
-  - [ ] Page Fault detaylı raporlama ve kurtarma stratejisi
+  - [x] Multiboot bellek haritasını okuma ve doğrulama
+  - [x] Fiziksel bellek yöneticisi (frame allocator)
+  - [x] Sanal bellek/paging etkinleştirme (PDE/PTE) ve CR3 yönetimi
+  - [x] Basit kernel heap (`kmalloc`/`kfree`)
+  - [x] Page Fault detaylı raporlama ve kurtarma stratejisi (panic)
 - Kesme/İstisna
-  - [ ] Tüm CPU istisnaları için açıklayıcı handler’lar
-  - [ ] Ortak `panic()` altyapısı ve hata ekranı (stack dump, kayıtlar)
+  - [x] Page Fault hata kodu ve CR2 ayrıntılı raporlama
+  - [x] Ortak `panic()` altyapısı ve hata ekranı (stack dump, kayıtlar)
 - Zamanlayıcı ve Görevler
   - [ ] TSS kurulumu ve bağlam değiştirme (context switch)
   - [ ] Basit zamanlayıcı (Round-Robin) ile çoklu görev
@@ -187,8 +161,8 @@ Bu proje MIT lisansı ile lisanslanmıştır.
   - [ ] Kod yapısı, katkı rehberi ve tarz kuralları
 
 - Önceliklendirme (ilk hedefler)
-  - [ ] Bellek yönetimi (MMU/paging + frame allocator)
-  - [ ] İstisna handler’ları ve `panic()`
+  - [x] Bellek yönetimi (MMU/paging + frame allocator)
+  - [x] İstisna handler’ları ve `panic()` (temel)
   - [ ] Terminal geliştirmeleri ve klavye girişi
 
 ---

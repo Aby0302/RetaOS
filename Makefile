@@ -19,10 +19,15 @@ SRC_DIR = src
 # Source files
 C_SOURCES = \
 	src/kernel/kernel.c \
+	src/kernel/multiboot.c \
+	src/memory/pmm.c \
+	src/memory/heap.c \
+	src/arch/x86/memory/paging.c \
 	src/arch/x86/gdt/gdt.c \
 	src/arch/x86/interrupts/idt.c \
 	src/arch/x86/interrupts/isr.c \
-	src/drivers/serial/serial.c
+	src/drivers/serial/serial.c \
+	src/drivers/keyboard/keyboard.c
 
 ASM_NASM_SOURCES = \
 	src/arch/x86/boot/boot.s

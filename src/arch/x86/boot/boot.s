@@ -25,6 +25,10 @@ _start:
     ; Set up stack
     mov esp, stack_top
     
+    ; Pass Multiboot registers as cdecl args: (magic, mbi_addr)
+    push ebx
+    push eax
+    
     ; Call kernel main
     call kernel_main
     

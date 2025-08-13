@@ -6,6 +6,7 @@ SECTIONS
 
     .text BLOCK(4K) : ALIGN(4K)
     {
+        _kernel_start = .;
         *(.multiboot)
         *(.text*)
     }
@@ -25,4 +26,5 @@ SECTIONS
         *(COMMON)
         *(.bss*)
     }
+    _kernel_end = .;
 }

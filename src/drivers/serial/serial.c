@@ -1,4 +1,4 @@
-#include "include/io.h"
+#include "include/arch/x86/io.h"
 #include <stddef.h>
 #include <stdint.h>
 #define COM1 0x3F8
