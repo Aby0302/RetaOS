@@ -49,7 +49,7 @@ static void dump_registers(const struct isr_context* ctx){
 }
 
 void exception_handler(uint32_t vector, uint32_t error_code, const struct isr_context* ctx){
-  uint32_t cr2 = 0, eip = 0, cs = 0, eflags = 0;
+  uint32_t cr2 = 0;
   if (vector == 14){ __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2)); }
   // The CPU pushed (in order): error_code (if any), EIP, CS, EFLAGS, [ESP, SS] if privilege change.
   // We cannot reliably read EIP/CS from C without the full stack frame; log what we can.

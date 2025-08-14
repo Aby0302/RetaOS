@@ -139,11 +139,14 @@ Bu mod QEMU'yu debugger ile başlatır (port 1234).
   - [x] Page Fault hata kodu ve CR2 ayrıntılı raporlama
   - [x] Ortak `panic()` altyapısı ve hata ekranı (stack dump, kayıtlar)
 - Zamanlayıcı ve Görevler
-  - [ ] TSS kurulumu ve bağlam değiştirme (context switch)
+  - [x] TSS kurulumu ve bağlam değiştirme (context switch)
   - [ ] Basit zamanlayıcı (Round-Robin) ile çoklu görev
 - Sürücüler ve G/Ç
-  - [ ] Klavye sürücüsü: scancode → ASCII dönüştürme, halka tampon
-  - [ ] VGA terminal: kaydırma, renkler, `printf` benzeri biçimlendirme
+  - [x] Klavye sürücüsü: scancode → ASCII dönüştürme, halka tampon
+    - Shift, CapsLock, ok tuşları (E0), Home/End, Delete desteği eklendi
+    - Satır içi düzenleme için genişletilmiş API (özel tuş kodları) sağlandı
+  - [x] VGA terminal: kaydırma, renkler, `printf` benzeri biçimlendirme
+    - Basit `kprintf`, satır kaydırma, renkli çıktı ve satır içi düzenleme
   - [ ] Temel depolama (ATA/ATAPI) okuma ve blok cihaz soyutlaması
   - [ ] APIC/HPET ve ACPI tabanlı başlatma (orta/uzun vade)
 - Dosya Sistemi
