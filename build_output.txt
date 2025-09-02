@@ -1,0 +1,36 @@
+gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -nostdlib -fno-builtin -fno-pic -mno-red-zone -Wall -Wextra -std=c99 -g -I . -I include -I include/arch/x86 -I include/kernel -I . -c kernel/vfs.c -o build/obj/kernel/vfs.o
+kernel/vfs.c: In function ‘vfs_lookup’:
+kernel/vfs.c:209:23: warning: implicit declaration of function ‘strtok_r’; did you mean ‘strtok’? [-Wimplicit-function-declaration]
+  209 |     char* component = strtok_r(token, "/", &saveptr);
+      |                       ^~~~~~~~
+      |                       strtok
+kernel/vfs.c:209:23: warning: initialization of ‘char *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+kernel/vfs.c:218:23: warning: assignment to ‘char *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  218 |             component = strtok_r(NULL, "/", &saveptr);
+      |                       ^
+kernel/vfs.c:226:23: warning: assignment to ‘char *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  226 |             component = strtok_r(NULL, "/", &saveptr);
+      |                       ^
+kernel/vfs.c:261:19: warning: assignment to ‘char *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  261 |         component = strtok_r(NULL, "/", &saveptr);
+      |                   ^
+kernel/vfs.c:282:39: warning: assignment to ‘char *’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  282 |                             component = strtok_r(NULL, "/", &saveptr);
+      |                                       ^
+kernel/vfs.c: At top level:
+kernel/vfs.c:754:14: error: conflicting types for ‘vfs_read_dir’; have ‘vfs_dirent_t(vfs_node_t *)’ {aka ‘struct vfs_dirent(struct vfs_node *)’}
+  754 | vfs_dirent_t vfs_read_dir(vfs_node_t* dir) {
+      |              ^~~~~~~~~~~~
+In file included from kernel/vfs.c:1:
+./include/kernel/vfs.h:231:15: note: previous declaration of ‘vfs_read_dir’ with type ‘vfs_dirent_t *(vfs_node_t *)’ {aka ‘struct vfs_dirent *(struct vfs_node *)’}
+  231 | vfs_dirent_t* vfs_read_dir(vfs_node_t* dir);
+      |               ^~~~~~~~~~~~
+kernel/vfs.c: In function ‘fat32_mount’:
+kernel/vfs.c:1026:37: warning: unused parameter ‘device’ [-Wunused-parameter]
+ 1026 | vfs_node_t* fat32_mount(const char* device) {
+      |                         ~~~~~~~~~~~~^~~~~~
+kernel/vfs.c: At top level:
+kernel/vfs.c:167:12: warning: ‘child_lookup’ defined but not used [-Wunused-function]
+  167 | static int child_lookup(vfs_node_t* dir, const char* name, vfs_node_t* out_node) {
+      |            ^~~~~~~~~~~~
+make: *** [Makefile:89: build/obj/kernel/vfs.o] Error 1

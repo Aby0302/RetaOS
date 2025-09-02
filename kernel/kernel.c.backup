@@ -1,0 +1,1010 @@
+// Minimal kernel for RetaOS
+#include "include/drivers/serial.h"
+#include "include/arch/x86/gdt.h"
+#include "include/arch/x86/idt.h"
+#include "include/arch/x86/isr.h"
+#include "include/arch/x86/io.h"  // For outb and other I/O functions
+#include "include/drivers/keyboard.h"
+#include "include/drivers/serial.h"
+#include "include/kernel/sched.h"
+#include "include/kernel/block.h"
+#include "include/drivers/ata.h"
+#include "include/kernel/vfs.h"
+#include "include/kernel/initrd.h"
+#include "include/arch/x86/acpi.h"
+#include "include/kernel/syscall.h"
+#include "include/kernel/syscalls.h"
+#include "include/kernel/elf.h"
+#include "include/kernel/process.h"
+#include <stdarg.h>
+#include <stdint.h>  // uintX_t tipleri için
+#include <stddef.h>  // size_t için
+#include <stdint.h>  // uintptr_t için
+
+// VGA colors
+enum vga_color {
+    VGA_COLOR_BLACK = 0,
+    VGA_COLOR_BLUE = 1,
+    VGA_COLOR_GREEN = 2,
+    VGA_COLOR_CYAN = 3,
+    VGA_COLOR_RED = 4,
+    VGA_COLOR_MAGENTA = 5,
+    VGA_COLOR_BROWN = 6,
+    VGA_COLOR_LIGHT_GREY = 7,
+    VGA_COLOR_DARK_GREY = 8,
+    VGA_COLOR_LIGHT_BLUE = 9,
+    VGA_COLOR_LIGHT_GREEN = 10,
+    VGA_COLOR_LIGHT_CYAN = 11,
+    VGA_COLOR_LIGHT_RED = 12,
+    VGA_COLOR_LIGHT_MAGENTA = 13,
+    VGA_COLOR_LIGHT_BROWN = 14,
+    VGA_COLOR_WHITE = 15
+};
+
+// VGA entry functions
+static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) {
+    return fg | bg << 4;
+}
+
+// Forward declare kprintf so early code can use it
+static void kprintf(const char* fmt, ...);
+
+// Hex output helper for debugging (Moved to serial.c)
+/*
+void serial_write_hex(unsigned int n) {
+    char buf[9];
+    const char* hex = "0123456789ABCDEF";
+    for(int i = 7; i >= 0; i--) {
+        buf[i] = hex[n & 0xF];
+        n >>= 4;
+    }
+    buf[8] = '\0';
+    serial_write(buf);
+}
+*/
+
+// Demo kernel threads for scheduler
+static void demo_thread(void* arg){
+    (void)arg; // Unused parameter
+    while(1) {
+        // This function is currently not used
+        __asm__ __volatile__ ("hlt");
+    }
+}
+
+static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
+    return (uint16_t) uc | (uint16_t) color << 8;
+}
+
+// String length function
+static size_t strlen_(const char* s) {
+    size_t n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+// Terminal variables
+static const size_t W = 80, H = 25;
+static size_t r, c;
+static uint8_t col;
+static uint16_t* buf;
+
+// Forward declaration (defined later)
+// Forward declarations
+static void set_color(enum vga_color fg, enum vga_color bg);
+static void term_scroll(void);
+
+// Terminal initialization
+static void term_init(void) {
+    serial_write("[VGA] Mapping text buffer to 0xB8000\n");
+    // Map VGA text buffer to physical address 0xB8000
+    buf = (uint16_t*)0xB8000;
+    col = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    r = 0;
+    c = 0;
+    
+    serial_write("[VGA] Clearing screen...\n");
+    
+    // Clear screen with spaces and default color
+    for (size_t y = 0; y < H; y++) {
+        for (size_t x = 0; x < W; x++) {
+            const size_t index = y * W + x;
+            buf[index] = vga_entry(' ', col);
+        }
+    }
+    
+    // Move cursor to top-left corner
+    // 0x3D4 and 0x3D5 are VGA index and data registers for cursor control
+    outb(0x3D4, 0x0F);
+    outb(0x3D5, (uint8_t)(0x00));
+    outb(0x3D4, 0x0E);
+    outb(0x3D5, (uint8_t)(0x00 >> 8));
+}
+
+// Put character at specific position
+static void putat(char ch, uint8_t color, size_t x, size_t y) {
+    if (x < W && y < H)
+        buf[y * W + x] = vga_entry(ch, color);
+}
+
+// Put character at current position
+static void put(char ch) {
+    if (ch == '\n') {
+        c = 0;
+        r++;
+        term_scroll();
+        return;
+    }
+    putat(ch, col, c, r);
+    if (++c == W) {
+        c = 0;
+        r++;
+        term_scroll();
+    }
+}
+
+// Write string with length
+static void write(const char* d, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        put(d[i]);
+    }
+    
+    // Update cursor position after writing
+    uint16_t pos = (uint16_t)(r * W + c);
+    outb(0x3D4, 0x0F);
+    outb(0x3D5, (uint8_t)(pos & 0xFF));
+    outb(0x3D4, 0x0E);
+    outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
+}
+
+// Write string
+static void writes(const char* d) {
+    write(d, strlen_(d));
+}
+
+// Small hex helper for blkread
+static char hex_digit(unsigned v) { return "0123456789ABCDEF"[v & 0xF]; }
+
+// Helper function to print hex values
+static void put_hex8(uint8_t v) {
+    put(hex_digit((v>>4)&0xF));
+    put(hex_digit(v&0xF));
+}
+
+static void put_hex32(uint32_t v) {
+    for(int i=28; i>=0; i-=4) 
+        put(hex_digit((v>>i)&0xF));
+}
+
+// Integer printing helpers
+static void itoa_unsigned(unsigned int val, unsigned int base, char* buf_out) {
+    static const char digits[] = "0123456789abcdef";
+    char tmp[32];
+    int i = 0;
+    if (val == 0) { buf_out[0] = '0'; buf_out[1] = '\0'; return; }
+    while (val && i < (int)sizeof(tmp)) { tmp[i++] = digits[val % base]; val /= base; }
+    int j = 0; while (i > 0) buf_out[j++] = tmp[--i]; buf_out[j] = '\0';
+}
+
+static void itoa_signed(int val, char* buf_out) {
+    if (val < 0) { *buf_out++ = '-'; itoa_unsigned((unsigned int)(-val), 10, buf_out); }
+    else { itoa_unsigned((unsigned int)val, 10, buf_out); }
+}
+
+// Minimal printf-like formatter: supports %s %d %x %c
+static void kvprintf(const char* fmt, va_list ap) {
+    for (const char* p = fmt; *p; ++p) {
+        if (*p != '%') { put(*p); continue; }
+        ++p;
+        if (!*p) break;
+        char numbuf[34];
+        switch (*p) {
+            case 's': {
+                const char* s = va_arg(ap, const char*);
+                if (!s) s = "(null)";
+                writes(s);
+            } break;
+            case 'd': {
+                int v = va_arg(ap, int);
+                char tmp[40];
+                itoa_signed(v, tmp);
+                writes(tmp);
+            } break;
+            case 'x': {
+                unsigned int v = va_arg(ap, unsigned int);
+                itoa_unsigned(v, 16, numbuf);
+                writes(numbuf);
+            } break;
+            case 'c': {
+                int ch = va_arg(ap, int);
+                put((char)ch);
+            } break;
+            case '%': put('%'); break;
+            default: put('%'); put(*p); break;
+        }
+    }
+}
+
+static void kprintf(const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    kvprintf(fmt, ap);
+    va_end(ap);
+}
+
+// Forward declarations for memory init (implemented in new modules)
+void mb_parse_and_init(uint32_t multiboot_magic, uint32_t multiboot_info_addr);
+void paging_init(void);
+void kheap_init(void);
+void* kmalloc(unsigned long size);
+
+// Terminal enhancements
+static void term_scroll(void){
+    // Scroll up one line
+    for (size_t y = 1; y < H; y++) {
+        for (size_t x = 0; x < W; x++) {
+            buf[(y-1) * W + x] = buf[y * W + x];
+        }
+    }
+    // Clear the last line
+    for (size_t x = 0; x < W; x++) {
+        buf[(H-1) * W + x] = vga_entry(' ', col);
+    }
+    r = H - 1;
+}
+static void set_color(enum vga_color fg, enum vga_color bg){ col = vga_entry_color(fg, bg); }
+
+// Minimal strcmp replacement (since we are freestanding and -fno-builtin)
+static int kstrcmp(const char* a, const char* b){
+    while (*a && (*a == *b)) { a++; b++; }
+    return (int)((unsigned char)*a) - (int)((unsigned char)*b);
+}
+
+// Redraw helper for the in-line editor (prints current line and positions cursor)
+static void redraw_line(const char* line, int len, int cur, int input_row, int input_col_start){
+    for (int i = 0; i < len && (input_col_start + i) < (int)W; i++)
+        putat(line[i], col, input_col_start + i, input_row);
+    for (int i = len; (input_col_start + i) < (int)W; i++)
+        putat(' ', col, input_col_start + i, input_row);
+    r = input_row;
+    c = input_col_start + cur;
+    if (c >= W) { c = W - 1; }
+}
+
+// Clear entire screen and reset cursor
+static void terminal_clear_screen(void){
+    for (size_t rr = 0; rr < H; rr++){
+        for (size_t cc = 0; cc < W; cc++){
+            putat(' ', col, (int)cc, (int)rr);
+        }
+    }
+    r = 0; c = 0;
+}
+
+// ---------------- Shell & Line Editor ----------------
+// Simple interactive line editor with history and basic commands
+static int min_(int a,int b){ return a<b?a:b; }
+
+#define LINE_MAX  128
+#define HIST_MAX  16
+static char history[HIST_MAX][LINE_MAX];
+static int  hist_len[HIST_MAX];
+static int  hist_count = 0;    // number of valid entries
+static int  hist_head = 0;     // next insert position
+
+static void history_add(const char* line, int len){
+    if (len <= 0) return;
+    int idx = hist_head;
+    int n = min_(len, LINE_MAX-1);
+    for (int i=0;i<n;i++) history[idx][i] = line[i];
+    history[idx][n] = '\0';
+    hist_len[idx] = n;
+    hist_head = (hist_head + 1) % HIST_MAX;
+    if (hist_count < HIST_MAX) hist_count++;
+}
+
+static void prompt(){
+    writes("$ ");
+}
+
+static int read_line(char* out, int maxlen){
+    int row = (int)r;
+    int col0 = (int)c;
+    int len = 0;
+    int cur = 0;
+    int hist_cursor = hist_head; // position after last; up will move backwards in history
+    out[0] = '\0';
+    for(;;){
+        int k = keyboard_getkey_nonblock();
+        if (k >= 0){
+            if (k == '\n'){
+                put('\n');
+                out[len] = '\0';
+                return len;
+            } else if (k == 1) { // Ctrl+A -> move to start
+                cur = 0; redraw_line(out, len, cur, row, col0);
+            } else if (k == 5) { // Ctrl+E -> move to end
+                cur = len; redraw_line(out, len, cur, row, col0);
+            } else if (k == 21) { // Ctrl+U -> clear line
+                len = 0; cur = 0; out[0] = '\0';
+                redraw_line(out, len, cur, row, col0);
+            } else if (k == 8){ // backspace
+                if (cur > 0){
+                    // shift left from cur-1
+                    for (int i = cur-1; i < len-1; ++i) out[i] = out[i+1];
+                    len--; cur--;
+                    redraw_line(out, len, cur, row, col0);
+                }
+            } else if (k == KBD_DEL){
+                if (cur < len){
+                    for (int i = cur; i < len-1; ++i) out[i] = out[i+1];
+                    len--;
+                    redraw_line(out, len, cur, row, col0);
+                }
+            } else if (k == KBD_LEFT){
+                if (cur > 0){ cur--; redraw_line(out, len, cur, row, col0); }
+            } else if (k == KBD_RIGHT){
+                if (cur < len){ cur++; redraw_line(out, len, cur, row, col0); }
+            } else if (k == KBD_HOME){
+                cur = 0; redraw_line(out, len, cur, row, col0);
+            } else if (k == KBD_END){
+                cur = len; redraw_line(out, len, cur, row, col0);
+            } else if (k == KBD_UP){
+                // navigate history backwards
+                if (hist_count > 0){
+                    int pos = (hist_cursor - 1 + HIST_MAX) % HIST_MAX;
+                    if (pos != hist_head || hist_count == HIST_MAX){
+                        hist_cursor = pos;
+                        int n = hist_len[hist_cursor];
+                        n = min_(n, maxlen-1);
+                        for (int i=0;i<n;i++) out[i] = history[hist_cursor][i];
+                        len = n; cur = n; out[len] = '\0';
+                        redraw_line(out, len, cur, row, col0);
+                    }
+                }
+            } else if (k == KBD_DOWN){
+                // navigate history forwards
+                if (hist_count > 0){
+                    int pos = (hist_cursor + 1) % HIST_MAX;
+                    // if we reach head, show empty line
+                    if (pos == hist_head){
+                        hist_cursor = hist_head;
+                        len = 0; cur = 0; out[0] = '\0';
+                        redraw_line(out, len, cur, row, col0);
+                    } else {
+                        hist_cursor = pos;
+                        int n = hist_len[hist_cursor];
+                        n = min_(n, maxlen-1);
+                        for (int i=0;i<n;i++) out[i] = history[hist_cursor][i];
+                        len = n; cur = n; out[len] = '\0';
+                        redraw_line(out, len, cur, row, col0);
+                    }
+                }
+            } else if (k >= 32 && k < 127){
+                // printable
+                if (len < maxlen-1){
+                    // insert at cur
+                    for (int i = len; i > cur; --i) out[i] = out[i-1];
+                    out[cur] = (char)k; len++; cur++;
+                    out[len] = '\0';
+                    redraw_line(out, len, cur, row, col0);
+                }
+            }
+        }
+        // Yield to other tasks to avoid hogging CPU
+        yield();
+    }
+}
+
+// Simple atoi
+static int atoi_(const char* s){ int v=0,neg=0; if(*s=='-'){neg=1;s++;} while(*s>='0'&&*s<='9'){ v=v*10+(*s-'0'); s++; } return neg?-v:v; }
+
+static void shell_thread(void* arg){
+    (void)arg;
+    char line[LINE_MAX];
+    writes("\nType 'help' for commands.\n\n");
+    for(;;){
+        prompt();
+        int n = read_line(line, LINE_MAX);
+        if (n <= 0) continue;
+        // add to history
+        history_add(line, n);
+        // parse
+        if (kstrcmp(line, "help") == 0){
+            writes("Commands:\n");
+            writes("  help                - show this help\n");
+            writes("  ps                  - show tasks and RR quantum\n");
+            writes("  quantum N           - set round-robin quantum (ticks)\n");
+            writes("  rr on|off           - enable/disable preemption\n");
+            writes("  time                - show PIT ticks and seconds\n");
+            writes("  echo TEXT           - print TEXT\n");
+            writes("  blk                 - list block devices\n");
+            writes("  blkread DEV LBA N   - read N sectors from DEV and hexdump\n");
+            writes("  part DEV            - show MBR partitions of DEV\n");
+            writes("  ls [PATH]           - list directory (default /) from VFS\n");
+            writes("  cat PATH            - print file from VFS (caps at 2KB)\n");
+            writes("  clear               - clear screen\n");
+            writes("  acpi                - show ACPI discovery info\n");
+            writes("Shortcuts: Ctrl+A (home), Ctrl+E (end), Ctrl+U (clear line)\n");
+        } else if (kstrcmp(line, "ps") == 0){
+            int cnt = scheduler_task_count();
+            int curi = scheduler_current_index();
+            int q = scheduler_get_quantum();
+            kprintf("tasks=%d current=%d quantum=%d preempt=%d\n", cnt, curi, q, scheduler_get_preempt());
+        } else if (line[0]=='q' && line[1]=='u' && line[2]=='a' && line[3]=='n' && line[4]=='t' && line[5]=='u' && line[6]=='m'){
+            // parse quantum N
+            const char* p = line + 7;
+            while (*p==' '||*p=='\t') p++;
+            int val = atoi_(p);
+            if (val > 0){ scheduler_set_quantum(val); kprintf("quantum set to %d\n", val); }
+            else { writes("usage: quantum N\n"); }
+        } else if (line[0]=='r' && line[1]=='r'){
+            const char* p = line + 2; while (*p==' '||*p=='\t') p++;
+            if (p[0]=='o' && p[1]=='n' && (p[2]==0 || p[2]==' '||p[2]=='\t')){
+                scheduler_set_preempt(1); writes("preemption: on\n");
+            } else if (p[0]=='o' && p[1]=='f' && p[2]=='f' && (p[3]==0 || p[3]==' '||p[3]=='\t')){
+                scheduler_set_preempt(0); writes("preemption: off\n");
+            } else {
+                writes("usage: rr on|off\n");
+            }
+        } else if (kstrcmp(line, "time") == 0){
+            unsigned int t = timer_get_ticks();
+            unsigned int sec = t / 100; unsigned int ms = (t % 100) * 10;
+            kprintf("ticks=%d time=%d.%03d s\n", (int)t, (int)sec, (int)ms);
+        } else if (line[0]=='e' && line[1]=='c' && line[2]=='h' && line[3]=='o'){
+            const char* p = line + 4; while (*p==' '||*p=='\t') p++;
+            writes(p); put('\n');
+        } else if (kstrcmp(line, "blk") == 0){
+            int n = blk_count();
+            kprintf("block devices: %d\n", n);
+            for (int i=0;i<n;i++){
+                block_dev_t* d = blk_get(i);
+                if (!d) continue;
+                kprintf("  %s: sector=%d bytes, sectors=%d\n", d->name, (int)d->sector_size, (int)d->sectors);
+            }
+        } else if (line[0]=='b' && line[1]=='l' && line[2]=='k' && line[3]=='r' && line[4]=='e' && line[5]=='a' && line[6]=='d'){
+            // syntax: blkread DEV LBA N
+            const char* p = line + 7; while (*p==' '||*p=='\t') p++;
+            const char* dev = p; while (*p && *p!=' ' && *p!='\t') p++;
+            if (*dev==0){ writes("usage: blkread DEV LBA N\n"); }
+            else {
+                char name[16]; int i=0; const char* q=dev; while (*q && *q!=' ' && *q!='\t' && i<15){ name[i++]=*q++; } name[i]='\0';
+                while (*p==' '||*p=='\t') p++;
+                int lba = atoi_(p);
+                while (*p && *p!=' ' && *p!='\t') p++;
+                while (*p==' '||*p=='\t') p++;
+                int nsec = atoi_(p);
+                if (nsec <= 0) { nsec = 1; }
+                if (nsec > 8) { nsec = 8; } // cap
+                block_dev_t* d = blk_find(name);
+                if (!d){ writes("device not found\n"); }
+                else {
+                    int bytes = nsec * (int)d->sector_size;
+                    void* buf = kmalloc(bytes);
+                    if (!buf){ writes("alloc failed\n"); }
+                    else {
+                        int rc = blk_read(d, (uint32_t)lba, (uint32_t)nsec, buf);
+                        if (rc != 0){ kprintf("read error %d\n", rc); }
+                        else {
+                            // hexdump
+                            uint8_t* b = (uint8_t*)buf;
+                            for (int off=0; off<bytes; off+=16){
+                                put_hex32((uint32_t)off); writes(": ");
+                                for (int j=0;j<16 && off+j<bytes;j++){ put_hex8(b[off+j]); put(' '); }
+                                put(' '); put(' ');
+                                for (int j=0;j<16 && off+j<bytes;j++){
+                                    char ch = (b[off+j] >= 32 && b[off+j] < 127) ? (char)b[off+j] : '.';
+                                    put(ch);
+                                }
+                                put('\n');
+                            }
+                        }
+                        // note: simple demo, no kfree implemented in this kernel
+                    }
+                }
+            }
+        } else if (line[0]=='p' && line[1]=='a' && line[2]=='r' && line[3]=='t'){
+            // syntax: part DEV (reads MBR and prints 4 primary entries)
+            const char* p = line + 4; while (*p==' '||*p=='\t') p++;
+            if (*p == 0){ writes("usage: part DEV\n"); }
+            else {
+                char name[16]; int i=0; while (*p && *p!=' ' && *p!='\t' && i<15){ name[i++]=*p++; } name[i]='\0';
+                block_dev_t* d = blk_find(name);
+                if (!d){ writes("device not found\n"); }
+                else {
+                    void* buf = kmalloc((int)d->sector_size);
+                    if (!buf){ writes("alloc failed\n"); }
+                    else {
+                        if (blk_read(d, 0, 1, buf) != 0){ writes("read error\n"); }
+                        else {
+                            uint8_t* b = (uint8_t*)buf;
+                            // check MBR signature 0x55AA
+                            if (b[510] != 0x55 || b[511] != 0xAA){ writes("no MBR signature\n"); }
+                            else {
+                                writes("MBR partitions (primary):\n");
+                                for (int pi=0; pi<4; ++pi){
+                                    int off = 446 + pi*16;
+                                    uint8_t status = b[off+0];
+                                    uint8_t type   = b[off+4];
+                                    uint32_t lba_start = (uint32_t)b[off+8] | ((uint32_t)b[off+9]<<8) | ((uint32_t)b[off+10]<<16) | ((uint32_t)b[off+11]<<24);
+                                    uint32_t lba_count = (uint32_t)b[off+12] | ((uint32_t)b[off+13]<<8) | ((uint32_t)b[off+14]<<16) | ((uint32_t)b[off+15]<<24);
+                                    kprintf("  %d: boot=%02x type=%02x start=%u sectors=%u\n", pi, status, type, (unsigned)lba_start, (unsigned)lba_count);
+                                }
+                            }
+                        }
+                        // no kfree in this kernel
+                    }
+                }
+            }
+        } else if (kstrcmp(line, "clear") == 0){
+            terminal_clear_screen();
+        } else if (kstrcmp(line, "acpi") == 0){
+            const acpi_rsdp_t* rsdp = acpi_get_rsdp();
+            const acpi_sdt_header_t* rsdt = acpi_get_rsdt();
+            const acpi_sdt_header_t* xsdt = acpi_get_xsdt();
+            const acpi_madt_t* madt = acpi_find_madt();
+            const acpi_hpet_t* hpet = acpi_find_hpet();
+            kprintf("RSDP=%x RSDT=%x XSDT=%x\n", (unsigned)rsdp, (unsigned)rsdt, (unsigned)xsdt);
+            kprintf("MADT=%x HPET=%x\n", (unsigned)madt, (unsigned)hpet);
+        } else if (line[0]=='l' && line[1]=='s' && (line[2]==0 || line[2]==' ' || line[2]=='\t')){
+            const char* p = line + 2; while (*p==' '||*p=='\t') p++;
+            const char* path = (*p)? p : "/";
+            vfs_dirent_t ents[32];
+            int n = vfs_list(path, ents, 32);
+            if (n < 0){ writes("ls: not a directory or not found\n"); }
+            else {
+                for (int i=0;i<n;i++){
+                    kprintf("%c %s %u\n", ents[i].is_dir? 'd':'-', ents[i].name, (unsigned)ents[i].size);
+                }
+            }
+        } else if (line[0]=='c' && line[1]=='a' && line[2]=='t' && (line[3]==0 || line[3]==' ' || line[3]=='\t')){
+            const char* p = line + 3; while (*p==' '||*p=='\t') p++;
+            if (!*p){ writes("usage: cat /path/to/file\n"); }
+            else {
+                char path[128]; int i=0; while (*p && i<127){ path[i++]=*p++; } path[i]='\0';
+                char* buf = (char*)kmalloc(2048);
+                if (!buf){ writes("alloc failed\n"); }
+                else {
+                    uint32_t outlen=0; int r = vfs_read_all(path, buf, 2048, &outlen);
+                    if (r!=0){ writes("cat: cannot read file\n"); }
+                    else {
+                        for (uint32_t j=0;j<outlen;j++)
+                            put(buf[j]);
+                        if (outlen==2048) writes("\n...[truncated]\n");
+                        else writes("\n");
+                    }
+                }
+            }
+        } else {
+            writes("unknown command\n");
+        }
+        // be nice
+        yield();
+    }
+}
+
+// Kernel symbols for memory layout
+extern uint32_t _kernel_start;
+extern uint32_t _kernel_end;
+
+/**
+ * Kernel ana fonksiyonu - Sistem başlatmasının ana giriş noktasıdır.
+ * 
+ * @param mb_magic     Multiboot2 magic değeri (0x36d76289 olmalıdır)
+ * @param mb_info_addr Multiboot2 bilgi yapısının fiziksel adresi
+ * 
+ * Bu fonksiyon şu işlemleri gerçekleştirir:
+ * 1. Multiboot2 bilgilerini doğrular ve işler
+ * 2. Donanım bileşenlerini başlatır (IDT, PIC, zamanlayıcı, klavye)
+ * 3. Bellek yöneticisini başlatır
+ * 4. Dosya sistemini başlatır
+ * 5. Sistem çağrılarını başlatır
+ * 6. Init sürecini başlatır
+ * 7. Zamanlayıcıyı (scheduler) başlatır
+ * 
+ * Bu fonksiyondan asla çıkılmamalıdır. Eğer çıkılırsa, sistem durur.
+ */
+void kernel_main(uint32_t mb_magic, uint32_t mb_info_addr) {
+    // 0. Early serial output before anything else
+    serial_init();
+    serial_write("[RetaOS] Early serial output enabled\r\n");
+    
+    // 1. Print a test pattern to VGA memory directly
+    uint16_t* vga = (uint16_t*)0xB8000;
+    for (int i = 0; i < 80*25; i++) {
+        vga[i] = 0x0F00 | ('A' + (i % 26));
+    }
+    
+    // 2. Initialize VGA text mode
+    serial_write("[RetaOS] Initializing VGA text mode...\r\n");
+    term_init();
+    set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    serial_write("[RetaOS] VGA text mode initialized\r\n");
+    
+    // 3. More detailed serial output for debugging
+    serial_write("[RetaOS] Kernel starting...\r\n");
+    
+    // 4. Test VGA output
+    writes("VGA Test: Hello from RetaOS!\n");
+    serial_write("[RetaOS] VGA test message written\r\n");
+    
+    // 3. Önyükleme mesajını yazdır
+    const char* boot_msg = "RetaOS Başlatılıyor...\n";
+    writes(boot_msg);
+    serial_write(boot_msg);
+    
+    // 4. Kernel bilgilerini yazdır
+    kprintf("Kernel yükleme adresi: 0x%x\n", &_kernel_start);
+    kprintf("Kernel bitiş adresi: 0x%x\n", &_kernel_end);
+    kprintf("Kernel boyutu: %u KB\n", 
+           ((uint32_t)&_kernel_end - (uint32_t)&_kernel_start + 1023) / 1024);
+    
+    // 5. Multiboot2 bilgilerini kontrol et
+    kprintf("Multiboot2 magic: 0x%x\n", mb_magic);
+    kprintf("Multiboot2 bilgi adresi: 0x%x\n", mb_info_addr);
+    
+    // 6. Multiboot2 uyumluluk kontrolü
+    if (mb_magic != 0x36d76289) {  // Multiboot2 magic number
+        kprintf("Hata: Multiboot2 uyumlu bir önyükleyici tarafından başlatılmadı!\n");
+        kprintf("Beklenen magic: 0x36d76289, alınan: 0x%x\n", mb_magic);
+        set_color(VGA_COLOR_WHITE, VGA_COLOR_RED);
+        writes("Hata: Multiboot2 uyumlu önyükleyici bulunamadı!\n");
+        while (1) __asm__ __volatile__ ("hlt");
+    }
+    
+    // If we get here, we were booted by a Multiboot2-compliant boot loader
+    // The bootloader passes us a pointer to a structure containing information
+    // about the system in the ebx register (mb_info_addr parameter)
+    // We'll store this for later use
+    uint32_t* mb_info = (uint32_t*)mb_info_addr;
+    // Early serial for debugging
+    // serial_init(); // Already initialized above
+    serial_write("[RetaOS] Serial initialized.\n");
+    
+    // Print Multiboot2 info
+    serial_write("Multiboot2 magic: 0x");
+    serial_write_hex(mb_magic);
+    serial_write("\n");
+    serial_write("Multiboot2 info at: 0x");
+    serial_write_hex(mb_info_addr);
+    serial_write("\n");
+    
+    // Print a welcome message with system info
+    kprintf("RetaOS Booting...\n");
+    kprintf("Multiboot2 magic: 0x%x\n", mb_magic);
+    kprintf("Multiboot2 info: 0x%x\n", mb_info_addr);
+    
+    // Dump first 32 bytes of multiboot2 info structure for debugging
+    kprintf("Multiboot2 info structure dump (first 32 bytes):\n");
+    for (int i = 0; i < 8; i++) {
+        kprintf("  [%02d] 0x%08x\n", i*4, mb_info[i]);
+    }
+    
+    // Parse multiboot2 info structure
+    if (mb_info[0] < 2*4) {
+        kprintf("Invalid multiboot2 info structure size: %u\n", mb_info[0]);
+        // Halt if the structure is invalid
+        set_color(VGA_COLOR_WHITE, VGA_COLOR_RED);
+        writes("Fatal: Invalid Multiboot2 info structure!\n");
+        while (1) __asm__ __volatile__ ("hlt");
+    }
+    
+    kprintf("Multiboot2 info structure size: %u bytes\n", mb_info[0]);
+    kprintf("Reserved: 0x%x\n", mb_info[1]);
+    
+    // Parse tags
+    uint32_t offset = 8;  // Skip total size and reserved fields
+    uint32_t tag_count = 0;
+    
+    // First pass: count tags
+    while (offset < mb_info[0]) {
+        uint32_t* tag = (uint32_t*)((uint8_t*)mb_info + offset);
+        uint32_t tag_type = tag[0];
+        uint32_t tag_size = tag[1];
+        
+        tag_count++;
+        
+        // Check for end tag
+        if (tag_type == 0 && tag_size == 8) {
+            break;
+        }
+        
+        // Move to next tag (aligned to 8 bytes)
+        offset += tag_size;
+        if (offset % 8 != 0) {
+            offset += 8 - (offset % 8);
+        }
+        
+        // Safety check
+        if (offset >= mb_info[0] - 8) {
+            break;
+        }
+    }
+    
+    kprintf("Found %u Multiboot2 tags\n", tag_count);
+    
+    // Second pass: process tags
+    offset = 8;  // Reset offset for second pass
+    while (offset < mb_info[0]) {
+        uint32_t* tag = (uint32_t*)((uint8_t*)mb_info + offset);
+        uint32_t tag_type = tag[0];
+        uint32_t tag_size = tag[1];
+        
+        // Print tag info
+        kprintf("Tag 0x%x, size: %u bytes\n", tag_type, tag_size);
+        
+        // Handle different tag types
+        switch (tag_type) {
+            case 0: // End tag
+                kprintf("  End tag\n");
+                // Exit the loop when we find the end tag
+                offset = mb_info[0];
+                break;
+                
+            case 1: // Boot command line
+                if (tag_size > 8) {  // Minimum size check
+                    kprintf("  Boot command line: %s\n", (char*)(tag + 2));
+                }
+                break;
+                
+            case 2: // Boot loader name
+                if (tag_size > 8) {  // Minimum size check
+                    kprintf("  Boot loader name: %s\n", (char*)(tag + 2));
+                }
+                break;
+                
+            case 6: { // Memory map
+                if (tag_size >= 16) {  // Minimum size check for memory map tag
+                    uint32_t entry_size = *(uint32_t*)(tag + 2);
+                    uint32_t entry_version = *(uint32_t*)(tag + 3);
+                    kprintf("  Memory map: entry_size=%u, entry_version=%u\n", entry_size, entry_version);
+                    uint32_t num_entries = (tag_size - 16) / entry_size;
+                    
+                    kprintf("  Memory map (%u entries, entry size: %u, version: %u)\n", 
+                           num_entries, entry_size, entry_version);
+                    
+                    // Process each memory map entry
+                    uint8_t* entry = (uint8_t*)(tag + 4);
+                    for (uint32_t i = 0; i < num_entries; i++) {
+                        uint64_t addr = *(uint64_t*)(entry);
+                        uint64_t len = *(uint64_t*)(entry + 8);
+                        uint32_t type = *(uint32_t*)(entry + 16);
+                        
+                        const char* type_str;
+                        switch (type) {
+                            case 1: type_str = "Available RAM"; break;
+                            case 2: type_str = "Reserved"; break;
+                            case 3: type_str = "ACPI reclaimable"; break;
+                            case 4: type_str = "ACPI NVS"; break;
+                            case 5: type_str = "Bad memory"; break;
+                            default: type_str = "Unknown"; break;
+                        }
+                        
+                        kprintf("    %016llx-%016llx %s\n", 
+                               (unsigned long long)addr, 
+                               (unsigned long long)(addr + len - 1),
+                               type_str);
+                        
+                        entry += entry_size;
+                    }
+                }
+                break; // Break for case 6
+            }
+            case 8: { // Framebuffer info
+                uint64_t addr = *(uint64_t*)(tag + 2);
+                uint32_t pitch = *(uint32_t*)(tag + 4);
+                uint32_t width = *(uint32_t*)(tag + 5);
+                uint32_t height = *(uint32_t*)(tag + 6);
+                uint8_t bpp = *(uint8_t*)(tag + 7);
+                // uint8_t type = *(uint8_t*)(tag + 8); // Removed unused variable
+                
+                kprintf("  Framebuffer: %ux%ux%u, pitch: %u, addr: 0x%llx\n",
+                       width, height, bpp, pitch, (unsigned long long)addr);
+                
+                // Store framebuffer info for later use
+                extern void set_framebuffer_info(uint64_t addr, uint32_t width, uint32_t height, uint32_t pitch, uint8_t bpp);
+                set_framebuffer_info(addr, width, height, pitch, bpp);
+                break;
+            }
+            case 9: { // ELF symbols
+                uint16_t num = *(uint16_t*)(tag + 2);
+                uint16_t entsize = *(uint16_t*)(tag + 3);
+                uint16_t shndx = *(uint16_t*)(tag + 4);
+                
+                kprintf("  ELF symbols: %u entries, size: %u, shndx: %u\n", 
+                       num, entsize, shndx);
+                
+                // Store ELF symbols for later use (e.g., for stack traces)
+                extern void set_elf_symbols(void* symtab, uint32_t num, uint32_t size, uint32_t shndx);
+                set_elf_symbols((void*)(tag + 5), num, entsize, shndx);
+                break;
+            }
+            case 10: { // APM table
+                uint16_t version = *(uint16_t*)(tag + 2);
+                uint16_t cseg = *(uint16_t*)(tag + 3);
+                uint32_t offset = *(uint32_t*)(tag + 4);
+                // uint16_t cseg_16 = *(uint16_t*)(tag + 5); // Removed unused variable
+                // uint16_t dseg = *(uint16_t*)(tag + 6); // Removed unused variable
+                uint16_t flags = *(uint16_t*)(tag + 7);
+                uint16_t cseg_len = *(uint16_t*)(tag + 8);
+                // uint16_t cseg_16_len = *(uint16_t*)(tag + 9); // Removed unused variable
+                // uint16_t dseg_len = *(uint16_t*)(tag + 10); // Removed unused variable
+                
+                kprintf("  APM table: v%u.%u, cseg: 0x%x, offset: 0x%x, flags: 0x%x\n",
+                       version >> 8, version & 0xff, cseg, offset, flags);
+                
+                // Store APM info for power management
+                extern void set_apm_info(uint16_t version, uint16_t cseg, uint32_t offset, 
+                                      uint16_t flags, uint16_t cseg_len);
+                set_apm_info(version, cseg, offset, flags, cseg_len);
+                break;
+            }
+            case 14: { // EFI 32-bit system table
+                uint32_t ptr = *(uint32_t*)(tag + 2);
+                kprintf("  EFI 32-bit system table at 0x%x\n", ptr);
+                
+                // Store EFI system table pointer for UEFI services
+                extern void set_efi_system_table_32(uint32_t ptr);
+                set_efi_system_table_32(ptr);
+                break;
+            }
+            case 15: { // EFI 64-bit system table
+                uint64_t ptr = *(uint64_t*)(tag + 2);
+                kprintf("  EFI 64-bit system table at 0x%llx\n", (unsigned long long)ptr);
+                
+                // Store EFI system table pointer for UEFI services
+                extern void set_efi_system_table_64(uint64_t ptr);
+                set_efi_system_table_64(ptr);
+                break;
+            }
+            case 16: { // SMBIOS tables
+                uint8_t major = *(uint8_t*)(tag + 2);
+                uint8_t minor = *(uint8_t*)(tag + 3);
+                uint8_t* tables = (uint8_t*)(tag + 4);
+                
+                kprintf("  SMBIOS %u.%u tables at 0x%p\n", major, minor, tables);
+                
+                // Store SMBIOS entry point for system information
+                extern void set_smbios_entry_point(uint8_t major, uint8_t minor, void* entry_point);
+                set_smbios_entry_point(major, minor, tables);
+                break;
+            }
+            default:
+                kprintf("  Unknown tag type: 0x%x\n", tag_type);
+                break;
+        }
+        
+        // Check for end tag
+        if (tag_type == 0 && tag_size == 8) {
+            kprintf("  End tag found\n");
+            break;
+        }
+        
+        // Move to next tag (aligned to 8 bytes)
+        offset += tag_size;
+        if (offset % 8 != 0) {
+            offset += 8 - (offset % 8);
+        }
+        
+        // Safety check
+        if (offset >= mb_info[0] - 8) {
+            kprintf("  Reached end of multiboot2 info structure\n");
+            break;
+        }
+    }  // End of while loop for processing tags
+        
+    kprintf("Finished processing Multiboot2 tags\n");
+    
+    // Print kernel information
+    kprintf("Kernel loaded at: 0x%x\n", &_kernel_start);
+    kprintf("Kernel end: 0x%x\n", &_kernel_end);
+    kprintf("Kernel size: %u KB\n", 
+           ((uint32_t)&_kernel_end - (uint32_t)&_kernel_start + 1023) / 1024);
+    
+    // Initialize system components
+    kprintf("Initializing system components...\n");
+    
+    // 1. Initialize memory management
+    kprintf("  - Memory management...\n");
+    extern void memory_init(void);
+    memory_init();
+    kprintf(" OK\n");
+    
+    // 2. Initialize interrupt handling
+    kprintf("  - Interrupt handling...\n");
+    
+    // 2.1. Initialize IDT
+    extern void idt_init(void);
+    idt_init();
+    
+    // 2.2. Initialize PIC
+    extern void pic_init(void);
+    pic_init();
+    kprintf(" OK\n");
+    
+    // 3. Initialize hardware devices
+    kprintf("  - Hardware devices...\n");
+    
+    // 3.1. Initialize system timer (100 Hz)
+    extern void timer_init(uint32_t frequency);
+    timer_init(100);
+    
+    // 3.2. Initialize keyboard
+    extern void keyboard_init(void);
+    keyboard_init();
+    
+    // 3.3. Enable interrupts
+    __asm__ __volatile__ ("sti");
+    kprintf(" OK\n");
+    
+    // 4. Initialize process management
+    kprintf("  - Process management...\n");
+    extern void process_init(void);
+    process_init();
+    kprintf(" OK\n");
+    
+    // 5. Initialize filesystem
+    kprintf("  - Filesystem...\n");
+    extern void fs_init(void);
+    fs_init();
+    kprintf(" OK\n");
+    
+    // 6. Initialize system calls
+    kprintf("  - System calls...\n");
+    extern void syscall_init(void);
+    syscall_init();
+    kprintf(" OK\n");
+    
+    kprintf("\nKernel initialized successfully!\n");
+    
+    // 7. Mount root filesystem
+    kprintf("Mounting root filesystem...\n");
+    extern int mount_root(void);
+    if (mount_root() != 0) {
+        kprintf(" FAILED\n");
+        set_color(VGA_COLOR_WHITE, VGA_COLOR_RED);
+        writes("Fatal: Failed to mount root filesystem!\n");
+        while (1) __asm__ __volatile__ ("hlt");
+    }
+    
+    // 8. Initialize scheduler
+    kprintf("\nInitializing scheduler...\n");
+    extern void scheduler_init(void);
+    scheduler_init();
+    kprintf("OK\n");
+    
+    // 9. Start init process
+    kprintf("\nStarting init process: /bin/init\n");
+    extern int start_init(void);
+    int init_pid = start_init();
+    
+    if (init_pid < 0) {
+        kprintf("Failed to start init process! (pid=%d)\n", init_pid);
+        set_color(VGA_COLOR_WHITE, VGA_COLOR_RED);
+        writes("Fatal: Failed to start init process!\n");
+        while (1) __asm__ __volatile__ ("hlt");
+    }
+    
+    kprintf("Init process started with PID: %d\n", init_pid);
+    
+    // 10. Start the scheduler - this will not return
+    kprintf("\nStarting scheduler...\n");
+    set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    writes("RetaOS is now running!\n");
+    set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    
+    // Start the scheduler - this will not return
+    // Zamanlayıcı başlatılıyor - bu fonksiyon geri dönmeyecek
+    extern void scheduler_start(void);
+    scheduler_start();
+    
+    // Buraya asla ulaşılmamalı, ama yine de güvenlik için
+    kprintf("Kernel panic: scheduler_start() döndü! Bu olmamalıydı.\n");
+    set_color(VGA_COLOR_WHITE, VGA_COLOR_RED);
+    writes("Fatal: Zamanlayıcı kernel_main()'e geri döndü!\n");
+    
+    // Sistemi durdur
+    while (1) {
+        // Kesmeleri devre dışı bırak ve işlemciyi durdur
+        __asm__ __volatile__ ("cli; hlt");
+    }
+}

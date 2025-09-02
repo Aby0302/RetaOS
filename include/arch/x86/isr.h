@@ -21,3 +21,9 @@ void irq_init_basic(void);
 
 // Panic interface
 void panic(const char* message);
+
+// Timer ticks since boot (PIT at 100Hz)
+unsigned int timer_get_ticks(void);
+
+// IRQ0 handler for timer interrupts
+void irq0_handler(uint32_t isr_esp);
