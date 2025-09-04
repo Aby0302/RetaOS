@@ -112,3 +112,21 @@ void console_set_cursor(uint32_t x, uint32_t y) {
     if (x < CONSOLE_WIDTH) console_x = x;
     if (y < CONSOLE_HEIGHT) console_y = y;
 }
+
+// Print a 32-bit value in hexadecimal (8 digits, uppercase)
+void console_put_hex(uint32_t n) {
+    for (int i = 7; i >= 0; --i) {
+        uint8_t nibble = (n >> (i * 4)) & 0xF;
+        char ch = (nibble < 10) ? ('0' + nibble) : ('A' + (nibble - 10));
+        console_putc(ch);
+    }
+}
+
+// Print an unsigned integer in decimal
+void console_put_dec(uint32_t n) {
+    char buf[11];
+    int i = 0;
+    if (n == 0) { console_putc('0'); return; }
+    while (n && i < (int)sizeof(buf)) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i > 0) console_putc(buf[--i]);
+}

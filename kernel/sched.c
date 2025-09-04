@@ -346,3 +346,21 @@ void scheduler_set_preempt(int on) {
 int scheduler_get_preempt(void) {
     return preempt_enabled;
 }
+
+// Diagnostics helpers used by shell 'ps'
+int scheduler_get_quantum(void) { return rr_quantum; }
+void scheduler_set_quantum(int ticks) { if (ticks > 0) rr_quantum = ticks; }
+
+// Count tasks and return current index in the list
+// We enumerate using the thread module's global list
+extern thread_t* thread_list_head(void);
+int scheduler_task_count(void) {
+    int count = 0; thread_t* t = thread_list_head();
+    while (t) { count++; t = t->next; }
+    return count;
+}
+int scheduler_current_index(void) {
+    int idx = 0; thread_t* t = thread_list_head();
+    while (t) { if (t == current_thread) return idx; idx++; t = t->next; }
+    return -1;
+}

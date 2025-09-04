@@ -121,6 +121,10 @@ typedef enum {
     SYS_RECVMMSG,
     SYS_SENDMMSG,
     SYS_GETDENTS64,
+    // --- RetaOS custom extensions for GUI/FB (explicit values) ---
+    SYS_FB_GETINFO = 240,
+    SYS_FB_FILL    = 241,
+    SYS_FB_RECT    = 242,
     SYS_COUNT // Toplam syscall sayısı
 } syscall_num_t;
 

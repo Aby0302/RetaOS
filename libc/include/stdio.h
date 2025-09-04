@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 #include <stdarg.h>
+#include <sys/types.h>
+
+// Basic file position typedef used by some prototypes
+typedef long fpos_t;
 
 // File stream type (simplified)
 typedef struct {
@@ -94,7 +98,6 @@ int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 #define stdout ((FILE*)1)
 #define stderr ((FILE*)2)
 
-// Type for fpos_t (file position)
-typedef long fpos_t;
+// Type for fpos_t (file position) (duplicate kept for compatibility)
 
 #endif /* _STDIO_H */

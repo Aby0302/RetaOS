@@ -12,11 +12,14 @@ typedef struct {
     int (*func)(int argc, char* argv[]);
 } command_t;
 
+// Forward declaration of command table
+static const command_t commands[];
+
 // Help command
 int cmd_help(int argc, char* argv[]) {
     (void)argc; (void)argv;
     printf("\nAvailable commands:\n");
-    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+    for (int i = 0; commands[i].name != NULL; i++) {
         printf("  %-10s - %s\n", commands[i].name, commands[i].description);
     }
     printf("\nTo run external programs, specify the full path.\n");

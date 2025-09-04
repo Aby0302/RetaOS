@@ -3,6 +3,8 @@
 #include "include/kernel/debug.h"
 #include "include/arch/x86/io.h"
 #include "include/drivers/keyboard.h"
+#include "include/drivers/serial.h"
+#include "include/kernel/timer.h"
 #define __FILENAME__ (__builtin_strrchr(__FILE__, '/') ? __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
 
 // External function declaration
@@ -16,31 +18,24 @@ extern void kprintf(const char* fmt, ...);
 static void vga_text_putstr(int x, int y, const char* str, uint8_t color);
 
 // Tuş bekleme fonksiyonu
+// Not: IRQ sürücüsü tamponundan okur; seri konsol için CR/LF de kabul edilir.
+// Zaman aşımı için kaba bir spin kullandık; timer_ticks kullanılmıyor.
 static void wait_for_keypress(void) {
-    // Klavye tamponunu boşalt
-    while (inb(0x64) & 1) (void)inb(0x60);
-
     vga_text_putstr(20, 24, "Waiting for key press... Press ENTER!", 0x0F);
 
-    int e0 = 0;
-    for (;;) {
-        uint8_t st = inb(0x64);
-        if (st & 1) {                    // Output buffer dolu
-            uint8_t sc = inb(0x60);      // scancode set 1
-            if (sc == 0xE0) { e0 = 1; continue; } // keypad enter için ön ek
-            // make-code (basma anı), break değil
-            if ((sc & 0x80) == 0) {
-                uint8_t code = sc & 0x7F;
-                if (code == 0x1C) break;         // "Enter" (ana klavye)
-                if (e0 && code == 0x1C) break;   // "Keypad Enter"
-            }
-            e0 = 0;
+    // Yaklaşık ~1-2 saniye kadar bekle (ortam hızına göre değişir)
+    for (volatile uint32_t spin = 0; spin < 10000000; ++spin) {
+        int ch = keyboard_getchar_nonblock();
+        if (ch == '\n') break;
+        int s = serial_getchar_nonblock();
+        if (s == '\r' || s == '\n') break;
+        __asm__ __volatile__("pause");
+        if (spin == 9999999) {
+            vga_text_putstr(20, 24, "No keypress; auto-continue...        ", 0x0E);
         }
-        // Kısa gecikme (IRQ gerektirmez)
-        for (volatile int i = 0; i < 20000; ++i) __asm__ __volatile__("pause");
     }
 
-    vga_text_putstr(20, 24, "Key pressed! Starting system...       ", 0x0A);
+    vga_text_putstr(20, 24, "Continuing boot...                     ", 0x0A);
     for (volatile int i = 0; i < 1000000; ++i) __asm__ __volatile__("pause");
 }
 
@@ -147,30 +142,29 @@ void splash_hide(void) {
     vga_text_clear(0x07); // Siyah arka plan, beyaz yazı
 }
 
+// Kernel will provide this to continue boot (start shell/scheduler)
+extern void kernel_continue_after_splash(void);
+
 void splash_show_complete(void) {
     // Show completion message
     vga_text_putstr(20, 20, "System initialized successfully!", 0x0E); // Sarı
     vga_text_putstr(20, 21, "RetaOS is now running!", 0x0A); // Yeşil
     vga_text_putstr(20, 22, "Press ENTER to toggle GUI mode", 0x0B); // Cyan
-    vga_text_putstr(20, 23, "Press any key to continue...", 0x0F); // Beyaz
+    vga_text_putstr(20, 23, "Press ENTER to continue...", 0x0F); // Beyaz
     
     debug_print(DEBUG_LEVEL_INFO, __FILENAME__, __LINE__, __func__, "Boot completion message displayed");
     
-    // Wait for ENTER key press
+    // Do not block here; in serial/graphics-less boots ENTER may never arrive.
+    // We already show a message above; proceed automatically to user-mode init.
+    // If you want to re-enable key wait, call wait_for_keypress() here.
     wait_for_keypress();
+    //for (volatile int i = 0; i < 200000; ++i) __asm__ __volatile__("pause");
 
     splash_hide();          // ekranı temizle
-    debug_print(DEBUG_LEVEL_INFO,__FILENAME__,__LINE__,__func__,"GUI init...");
-    //gui_init();             // <-- kendi GUI başlatıcını çağır
-    // DUMAN TESTİ: mutlaka hemen boyayın
-    debug_print(DEBUG_LEVEL_INFO,__FILENAME__,__LINE__,__func__,"GUI initialized");
-    // DUMAN TESTİ: mutlaka hemen boyayın
-    //extern void display_clear(uint32_t rgb);
-    //display_clear(0x334455); // tüm ekran renklenmeli    
-    //gui_show();             // GUIyi göster
-    //console_init();
-    //console_show();
-    debug_print(DEBUG_LEVEL_INFO,__FILENAME__,__LINE__,__func__,"GUI shown");
-
+    // GUI yolunu daha sonra etkinleştireceğiz. Şimdilik metin konsolunda
+    // kal ve hiçbir grafik framebuffer işlemi yapma ki shell görünsün.
+    
     debug_print(DEBUG_LEVEL_INFO, __FILENAME__, __LINE__, __func__, "User pressed key, continuing to scheduler");
+    // Hand control back to kernel to start shell/scheduler
+    kernel_continue_after_splash();
 }

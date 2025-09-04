@@ -22,6 +22,8 @@ SECTIONS
         *(.text*)
     }
 
+    _text_start = .;
+
     /* Read-only data */
     .rodata ALIGN(4096) :
     {

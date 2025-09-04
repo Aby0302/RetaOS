@@ -24,12 +24,16 @@ extern void sched_init(void);  // Declaration for the scheduler initialization
 #include "include/kernel/syscalls.h"
 #include "include/kernel/elf.h"
 #include "include/kernel/process.h"
+#include "include/kernel/splash.h"
 //#include "include/gui/gui.h"       // disable GUI for CLI
 //#include "include/kernel/display.h" // disable display framebuffer
 #include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>
 #include "include/kernel/console.h"
+
+// Forward declare userspace launcher thread function
+static void user_init_launcher(void* arg);
 
 // VGA colors
 enum vga_color {
@@ -110,6 +114,19 @@ static void put(char ch) {
         }
         return;
     }
+    // Handle backspace locally (ASCII 8 / '\b')
+    if (ch == '\b' || ch == 8) {
+        if (c > 0) {
+            c--;
+        } else if (r > 0) {
+            r--;
+            c = W - 1;
+        } else {
+            return; // top-left; nothing to erase
+        }
+        putat(' ', col, c, r);
+        return;
+    }
     putat(ch, col, c, r);
     if (++c == W) {
         c = 0;
@@ -180,6 +197,29 @@ void kprintf(const char* fmt, ...) {
     va_end(ap);
 }
 
+// Kernel thread that mounts initrd from ATA disk and switches to userspace init
+static void user_init_launcher(void* arg) {
+    (void)arg;
+    extern void ata_init(void);
+    extern int initrd_mount_from_block(const char* dev, uint32_t lba_start, uint32_t max_sectors, uint32_t max_bytes_cap);
+    extern int elf_exec(const char* filename);
+
+    serial_write("[userinit] Initializing ATA...\r\n");
+    ata_init();
+    serial_write("[userinit] Mounting initrd from hda (LBA1)...\r\n");
+    // Read up to 256KB from LBA1 as initrd (ustar)
+    initrd_mount_from_block("hda", 1, 512, 512*1024);
+
+    serial_write("[userinit] Trying elf_exec /bin/init.elf\r\n");
+    if (elf_exec("/bin/init.elf") == 0)
+        return; // no return on success; elf_exec switches to usermode
+    serial_write("[userinit] Trying elf_exec /bin/sh\r\n");
+    if (elf_exec("/bin/sh") == 0)
+        return;
+    #include "include/kernel/bsod.h"
+    kernel_bsod("Kullanıcı alanı başlatılamadı!\n\ninit.elf ve sh çalıştırılamadı.\n\nMuhtemel nedenler:\n- initrd mount hatası\n- ELF yükleme/paging hatası\n- Kullanıcı programı bozuk\n\nLütfen logları kontrol edin.");
+}
+
 // Terminal functions for shell
 void terminal_clear_screen(void) {
     for (size_t rr = 0; rr < H; rr++) {
@@ -198,11 +238,14 @@ int read_line(char* out, int maxlen) {
     if (!out || maxlen <= 0) return -1;
     
     while (i < maxlen - 1) {
-        // Wait for a key
-        while ((c = keyboard_getchar_nonblock()) == -1) {
-            // Yield to other threads while waiting
-            extern void thread_yield(void);
-            thread_yield();
+        // Wait for a key from keyboard or serial
+        for (;;) {
+            int kc = keyboard_getchar_nonblock();
+            if (kc >= 0) { c = (char)kc; break; }
+            extern int serial_getchar_nonblock(void);
+            int sc = serial_getchar_nonblock();
+            if (sc >= 0) { c = (char)sc; if (c == '\r') c = '\n'; break; }
+            extern void thread_yield(void); thread_yield();
         }
         
         // Handle backspace
@@ -227,7 +270,9 @@ int read_line(char* out, int maxlen) {
         // Handle regular characters
         if (c >= ' ' && c <= '~') {
             out[i++] = c;
-            put(c); // Echo character
+            put(c); // Echo on VGA
+            extern void serial_write(const char*);
+            char s[2] = { c, '\0' }; serial_write(s); // Echo on serial
         }
     }
     
@@ -273,25 +318,36 @@ void _kernel_main(uint32_t mb_magic, uint32_t mb_info_addr) {
     // Log a few messages to screen and serial
     writes("RetaOS booting in CLI mode...\n");
     serial_write("RetaOS booting in CLI mode...\r\n");
-
+    splash_update_progress(5);
+    // Initialize GDT and then interrupt handling
+    extern void gdt_init(void);
+    gdt_init();
+    serial_write("[DEBUG] GDT initialized\r\n");
+    splash_update_progress(15);
     // Initialize interrupt handling
     idt_init();  // This will also initialize the PIC
     writes("IDT initialized\n");
     serial_write("[DEBUG] Initialize interrupt handling\r\n");
+    splash_update_progress(25);
     // Initialize IRQ handlers (timer and keyboard) - this also sets up the timer
     extern void irq_init_basic(void);
     irq_init_basic();
     writes("IRQ initialized\n");
     serial_write("[DEBUG] Initialize IRQ handlers\r\n");
+    splash_update_progress(35);
     // Initialize keyboard
     extern void keyboard_init(void);
     keyboard_init();
-    
     serial_write("[DEBUG] Initialize keyboard\r\n");
+    splash_update_progress(45);
     // Enable interrupts globally
     extern void interrupts_enable(void);
     interrupts_enable();
     serial_write("[DEBUG] Interrupts enabled globally\r\n");
+    splash_update_progress(55);
+
+    // Show Splash Screen
+    splash_show();
 
     // Initialize memory management
     extern void memory_init(uint32_t mb_magic, uint32_t mb_info_addr);
@@ -301,42 +357,55 @@ void _kernel_main(uint32_t mb_magic, uint32_t mb_info_addr) {
     extern void paging_init(void);
     paging_init();
     serial_write("[DEBUG] Initialize paging\r\n");
+    splash_update_progress(65);
     // Initialize process management
     extern void process_init(void);
     process_init();
     serial_write("[DEBUG] Initialize process management\r\n");
+    splash_update_progress(75);
     // Initialize threading system
     extern void threading_init(void);
     threading_init();
     serial_write("[DEBUG] Initialize threading system\r\n");
-    // Initialize filesystem
+    splash_update_progress(85);
+    // Initialize filesystem and (later) mount initrd
     extern void fs_init(void);
     fs_init();
     serial_write("[DEBUG] Initialize filesystem\r\n");
+    splash_update_progress(90);
     // Initialize system calls
     extern void syscall_init(void);
     syscall_init();
     serial_write("[DEBUG] Initialize system calls\r\n");
+    splash_update_progress(95);
     // Mount root filesystem
     extern void mount_root(void);
     mount_root();
     serial_write("[DEBUG] Mount root filesystem\r\n");
+    splash_update_progress(96);
     // Initialize scheduler
     sched_init();
     serial_write("[DEBUG] Initialize scheduler\r\n");
-    writes("Initialization complete. Starting scheduler...\n");
+    splash_update_progress(97);
+    //writes("Initialization complete. Starting scheduler...\n");
+    splash_update_progress(98);
     serial_write("Initialization complete. Starting scheduler...\r\n");
+    splash_update_progress(99);
+    serial_write("[DEBUG] Creating user init launcher thread\r\n");
+    splash_update_progress(100);
 
-    // Start shell thread
-    extern void shell_thread(void*);
-    serial_write("[DEBUG] About to create shell thread\r\n");
-    thread_create((void*(*)(void*))shell_thread, NULL);
-    serial_write("[DEBUG] Shell thread created successfully\r\n");
-
-    // Start the scheduler - this will not return
-    scheduler_start();
+    // Show splash completion and wait for ENTER; control will return via
+    // kernel_continue_after_splash() when user presses ENTER.
+    splash_show_complete();
 
     while (1) {
         __asm__ __volatile__ ("cli; hlt");
     }
+}
+
+// Called by splash.c after user presses ENTER on splash screen
+void kernel_continue_after_splash(void) {
+    serial_write("[KERNEL] ENTER pressed; starting scheduler and shell...\r\n");
+    thread_create((void*(*)(void*))user_init_launcher, NULL);
+    scheduler_start();
 }

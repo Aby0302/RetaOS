@@ -7,9 +7,11 @@
 #include <sys/types.h>
 #include <errno.h>
 
-// Remove local time_t and stat definitions to avoid conflicts
+// Forward declarations
+struct vfs_node;
+typedef struct vfs_node vfs_node_t;
 
-// Error codes
+// VFS file type flags
 #ifndef ENOENT
 #define ENOENT       2  // No such file or directory
 #endif
@@ -96,7 +98,6 @@
 #define FT_DIR      S_IFDIR
 
 // File system node structure
-typedef struct vfs_node vfs_node_t;
 
 typedef struct vfs_dirent {
     char name[VFS_NAME_MAX];
@@ -110,7 +111,7 @@ typedef ssize_t (*write_type_t)(vfs_node_t* node, uint32_t offset, const void* b
 typedef int (*open_type_t)(vfs_node_t* node, uint32_t flags);
 typedef int (*close_type_t)(vfs_node_t* node);
 typedef vfs_dirent_t (*readdir_type_t)(vfs_node_t* node, uint32_t index);
-typedef int (*finddir_type_t)(vfs_node_t* node, const char* name, vfs_node_t* out_node);
+typedef int (*finddir_type_t)(vfs_node_t* node, const char* name, vfs_node_t** out_node);
 typedef off_t (*lseek_type_t)(vfs_node_t* node, off_t offset, int whence);
 typedef int (*stat_type_t)(vfs_node_t* node, struct stat* st);
 
@@ -137,6 +138,27 @@ struct vfs_node {
     vfs_node_t* children; // First child node (for directories)
     vfs_node_t* next; // Next sibling node (for directories)
     uint32_t position; // Current position in file (for read/write operations)
+    struct vfs_ops* ops; // Add this member for file operations
+};
+
+// Define vfs_ops structure
+struct vfs_ops {
+    read_type_t read;
+    write_type_t write;
+    open_type_t open;
+    close_type_t close;
+    readdir_type_t readdir;
+    finddir_type_t finddir;
+};
+
+// Define vfs_file_ops structure
+struct vfs_file_ops {
+    read_type_t read;
+    write_type_t write;
+    open_type_t open;
+    close_type_t close;
+    readdir_type_t readdir;
+    finddir_type_t finddir;
 };
 
 // Initialize the virtual file system
@@ -160,6 +182,7 @@ int vfs_close(int fd);
 ssize_t vfs_read(int fd, void* buf, size_t count);
 ssize_t vfs_write(int fd, const void* buf, size_t count);
 off_t vfs_lseek(int fd, off_t offset, int whence);
+int vfs_size(int fd);
 
 // Read helper for files
 int vfs_read_all(const char* path, void* buf, uint32_t maxlen, uint32_t* out_len);
@@ -188,5 +211,8 @@ vfs_node_t* vfs_create_node(const char* name, uint32_t flags);
 
 // FAT32 filesystem driver
 vfs_node_t* fat32_mount(const char* device);
+
+// Add vfs_node_add_child function declaration
+void vfs_node_add_child(vfs_node_t* parent, vfs_node_t* child);
 
 #endif // _VFS_H

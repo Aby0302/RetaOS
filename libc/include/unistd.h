@@ -23,6 +23,14 @@
 #define O_TRUNC     0x0200  // Truncate file on open
 #define O_APPEND    0x0400  // Append to file
 
+// access(2) mode flags
+#ifndef F_OK
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
+#endif
+
 // Process control
 pid_t fork(void);
 int execve(const char *path, char *const argv[], char *const envp[]);

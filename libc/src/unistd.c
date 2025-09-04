@@ -1,4 +1,6 @@
 #include <unistd.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <sys/syscall.h>
 
 // System call wrapper
@@ -60,6 +62,7 @@ void *sbrk(intptr_t increment) {
 extern char **environ;
 
 // Get current working directory
+#ifdef SYS_GETCWD
 char *getcwd(char *buf, size_t size) {
     if (!buf) {
         // Allocate buffer if NULL is passed
@@ -77,8 +80,23 @@ char *getcwd(char *buf, size_t size) {
     
     return buf;
 }
+#endif
+
+// Simple busy-wait sleep (fallback)
+unsigned int sleep(unsigned int seconds) {
+    volatile unsigned long loops = (unsigned long)seconds * 1000000UL;
+    while (loops--) __asm__ __volatile__("pause");
+    return 0;
+}
+
+// Minimal access(2) stub: allow execve to probe; return 0 always
+int access(const char *pathname, int mode) {
+    (void)pathname; (void)mode; return 0;
+}
 
 // Change directory
+#ifdef SYS_CHDIR
 int chdir(const char *path) {
     return _syscall1(SYS_CHDIR, (long)path);
 }
+#endif

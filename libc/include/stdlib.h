@@ -88,6 +88,9 @@ long long int llabs(long long int j);
 
 // Integer division
 div_t div(int numer, int denom);
+// Minimal definitions to satisfy builds; full semantics not required
+typedef struct { long quot; long rem; } ldiv_t;
+typedef struct { long long quot; long long rem; } lldiv_t;
 ldiv_t ldiv(long numer, long denom);
 lldiv_t lldiv(long long numer, long long denom);
 

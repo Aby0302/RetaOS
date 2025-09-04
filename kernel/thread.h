@@ -45,4 +45,8 @@ void threading_init(void);
 // Round-robin quantum (defined in sched.c)
 extern int rr_quantum;
 
+// Introspection helper: return head of internal thread list
+// Used by diagnostics (e.g., ps command)
+thread_t* thread_list_head(void);
+
 #endif // _KERNEL_THREAD_H

@@ -15,12 +15,12 @@
 .macro EX_NOERR veclabel, vecnum
 \veclabel\()_stub:
     pushal
-    pushl $0                 # fake error code
-    pushl $\vecnum           # vector number
     lea 8(%esp), %eax        # ctx pointer to saved regs
-    pushl %eax               # ctx pointer
+    pushl %eax               # arg3: ctx pointer
+    pushl $0                 # arg2: error code (none)
+    pushl $\vecnum           # arg1: vector number
     call exception_handler
-    addl $12, %esp           # discard args (ctx, vec, err)
+    addl $12, %esp           # discard args (vec, err, ctx)
     popal
     iret
 .endm
@@ -31,12 +31,13 @@
 \veclabel\()_stub:
     pushal
     movl 32(%esp), %eax      # CPU error code after pushal
-    pushl %eax               # error code
-    pushl $\vecnum           # vector number
     lea 8(%esp), %eax        # ctx pointer to saved regs
-    pushl %eax               # ctx pointer
+    pushl %eax               # arg3: ctx pointer
+    movl 32(%esp), %eax      # reload CPU error (stack changed after push)
+    pushl %eax               # arg2: error code
+    pushl $\vecnum           # arg1: vector number
     call exception_handler
-    addl $12, %esp           # discard args (ctx, vec, err)
+    addl $12, %esp           # discard args (vec, err, ctx)
     popal
     addl $4, %esp            # discard CPU error code
     iret
@@ -60,11 +61,12 @@ EX_ERR   ex13, 13
 # Page Fault uses dedicated name for clarity
 ex14_stub_pf:
     pushal
-    movl 32(%esp), %eax
-    pushl %eax               # error code
-    pushl $14                # vector
+    movl 32(%esp), %eax      # get CPU error code
     lea 8(%esp), %eax        # ctx pointer to saved regs
-    pushl %eax
+    pushl %eax               # arg3: ctx pointer
+    movl 32(%esp), %eax      # reload CPU error (stack changed)
+    pushl %eax               # arg2: error code
+    pushl $14                # arg1: vector
     call exception_handler
     addl $12, %esp
     popal
@@ -90,15 +92,9 @@ syscall80_stub:
     iret
 irq0_stub:
     pushal
-    # Pass current ESP (pointer to saved regs) to C handler for preemptive switch
-    pushl %esp
-    call irq0_handler
+    pushl $0
+    call irq_handler
     addl $4, %esp
-    # If C handler returns non-zero in EAX, switch stack to that value
-    test %eax, %eax
-    jz 1f
-    mov %eax, %esp
-1:
     popal
     iret
 irq1_stub:

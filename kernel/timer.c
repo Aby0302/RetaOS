@@ -59,13 +59,13 @@ void timer_wait(uint32_t ticks) {
 }
 
 // Sleep for the specified number of milliseconds
-void sleep(uint32_t ms) {
+void kernel_sleep(uint32_t ms) {
     // Calculate the number of ticks to wait
     uint32_t ticks = (ms * TIMER_FREQ) / 1000;
     if (ticks == 0) {
         ticks = 1; // Sleep for at least 1 tick
     }
-    
+
     uint32_t end_ticks = timer_ticks + ticks;
     while (timer_ticks < end_ticks) {
         ASM_VOLATILE("hlt");

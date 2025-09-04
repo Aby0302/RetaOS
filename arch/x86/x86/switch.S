@@ -25,11 +25,11 @@ switch_threads:
     push esi
     push edi
     
-    ; Save current stack pointer to from->stack
-    mov [eax + 8], esp      ; from->stack = esp
+    ; Save current stack pointer to from->stack (offset 4 in thread_t)
+    mov [eax + 4], esp      ; from->stack = esp
     
-    ; Load new stack pointer from to->stack
-    mov esp, [ecx + 8]      ; esp = to->stack
+    ; Load new stack pointer from to->stack (offset 4 in thread_t)
+    mov esp, [ecx + 4]      ; esp = to->stack
     
     ; Restore non-volatile registers
     pop edi

@@ -5,10 +5,22 @@
 #include <kernel/elf.h>
 #include <kernel/sched.h>
 #include <drivers/serial.h>  // serial_write için
+#include <drivers/keyboard.h>
+#include <kernel/console.h>
+#include <kernel/thread.h>
+#include <gui/display.h>
+#include <gui/fb.h>
 #include <arch/x86/isr.h>    // isr_context yapısı için
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <gui/display.h>
+#include <gui/fb.h>
+
+// Prototypes for custom framebuffer syscalls
+int32_t sys_fb_getinfo(void* out, size_t size, uint32_t, uint32_t, uint32_t, uint32_t);
+int32_t sys_fb_fill(uint32_t rgb, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+int32_t sys_fb_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t rgb, uint32_t);
 
 // Maksimum syscall sayısı
 #define MAX_SYSCALLS 256
@@ -74,10 +86,33 @@ static int32_t sys_read(int fd, void* buf, size_t count,
                        uint32_t unused1, uint32_t unused2, uint32_t unused3) {
     (void)unused1; (void)unused2; (void)unused3;
     
-    // TODO: Dosya tanıtıcıları için kontrol ekle
+    // Basit TTY: fd==0 ise klavye VEYA seri porttan bloklayarak oku
     if (fd == 0) { // stdin
-        // Klavyeden okuma
-        return 0; // Şimdilik desteklenmiyor
+        if (!buf || count == 0) return 0;
+        char* out = (char*)buf;
+        size_t n = 0;
+        while (n < count) {
+            int ch = keyboard_getchar_nonblock();
+            if (ch < 0) {
+                // Try serial port as fallback (for -nographic/serial mode)
+                extern int serial_getchar_nonblock(void);
+                ch = serial_getchar_nonblock();
+                // Convert CR to LF for compatibility
+                if (ch == '\r') ch = '\n';
+            }
+            if (ch >= 0) {
+                out[n++] = (char)ch;
+                // Echo to VGA and serial so -nographic users see input
+                console_putc((char)ch);
+                char s[2] = { (char)ch, '\0' };
+                serial_write(s);
+                if (ch == '\n') break; // satır sonu okunduysa çık
+            } else {
+                // başka thread'lere CPU ver
+                thread_yield();
+            }
+        }
+        return (int32_t)n;
     }
     
     // Dosyadan okuma
@@ -90,14 +125,16 @@ static int32_t sys_write(int fd, const void* buf, size_t count,
     (void)unused1; (void)unused2; (void)unused3;
     
     if (fd == 1 || fd == 2) { // stdout veya stderr
-        // Ekrana yaz
+        // Konsola yaz ve ayrıca seri porta yansıt
         const char* str = (const char*)buf;
         for (size_t i = 0; i < count; i++) {
-            if (str[i] == '\0') break;
-            char temp[2] = {str[i], '\0'};
-            serial_write(temp);
+            char ch = str[i];
+            if (ch == '\0') break;
+            console_putc(ch);
+            char tmp[2] = { ch, '\0' };
+            serial_write(tmp);
         }
-        return count;
+        return (int32_t)count;
     }
     
     // Dosyaya yaz
@@ -195,5 +232,35 @@ void syscalls_init(void) {
     // Bellek yönetimi
     syscall_register(SYS_SBRK, (syscall_handler_t)sys_sbrk);
     
+    // Framebuffer helpers
+    syscall_register(SYS_FB_GETINFO, (syscall_handler_t)sys_fb_getinfo);
+    syscall_register(SYS_FB_FILL,    (syscall_handler_t)sys_fb_fill);
+    syscall_register(SYS_FB_RECT,    (syscall_handler_t)sys_fb_rect);
+
     serial_write("[syscalls] Initialized system calls\n");
+}
+
+// === Framebuffer syscall handlers ===
+int32_t sys_fb_getinfo(void* out, size_t size, uint32_t a3, uint32_t a4, uint32_t a5, uint32_t a6) {
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    if (!out || size < sizeof(fb_info_t)) return -1;
+    fb_info_t* info = (fb_info_t*)out;
+    extern struct video_mode current_mode;
+    info->width  = current_mode.width;
+    info->height = current_mode.height;
+    info->pitch  = current_mode.pitch;
+    info->bpp    = current_mode.bpp;
+    return 0;
+}
+
+int32_t sys_fb_fill(uint32_t rgb, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5, uint32_t a6) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    display_clear(rgb);
+    return 0;
+}
+
+int32_t sys_fb_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t rgb, uint32_t a6) {
+    (void)a6;
+    display_fill_rect(x, y, w, h, rgb);
+    return 0;
 }

@@ -45,6 +45,7 @@ void serial_init(void){
   serial_ready = 1;
 }
 static int is_transmit_empty(){ return inb(COM1 + 5) & 0x20; }
+static int serial_data_ready(){ return inb(COM1 + 5) & 0x01; }
 static void serial_putc(char ch){
   if(!serial_ready) return;
   while(!is_transmit_empty()) { }
@@ -64,4 +65,11 @@ void serial_write_dec(unsigned int v){
   if (v == 0){ serial_putc('0'); return; }
   while (v && i < 15){ buf[i++] = '0' + (v % 10); v /= 10; }
   while (i--) serial_putc(buf[i]);
+}
+
+// Non-blocking input read; returns -1 if no byte available
+int serial_getchar_nonblock(void){
+  if(!serial_ready) return -1;
+  if (!serial_data_ready()) return -1;
+  return (int)(uint8_t)inb(COM1);
 }

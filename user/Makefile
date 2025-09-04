@@ -5,21 +5,24 @@ CC = i686-linux-gnu-gcc
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra \
          -I../include -I../libc/include -fno-stack-protector
 
-# Linker flags
+# Linker flags (no kernel linker script; user programs have their own _start)
 LDFLAGS = -ffreestanding -nostdlib -L../libc -lretac -lgcc
 
+# CRT start object
+CRT_START = crt/start.o
+
 # User applications
-USER_APPS = crt/init.elf sh/shell.elf crt/hello.elf test/fat32_test.elf crt/keyboard_utils.elf
+USER_APPS = crt/init.elf sh/shell.elf crt/hello.elf gui/gui.elf
 
 # All source files
-SOURCES = $(wildcard crt/*.c sh/*.c test/*.c) crt/keyboard_utils.c
+SOURCES = $(wildcard crt/*.c sh/*.c gui/*.c)
 OBJECTS = $(SOURCES:.c=.o)
 
 # Default target
-all: libc $(USER_APPS)
+all: ../libc/libretac.a $(USER_APPS)
 
-# Build libc first
-libc:
+# Build libc first (use file dependency to avoid parallel races)
+../libc/libretac.a:
 	$(MAKE) -C ../libc
 
 # Clean libc
@@ -33,10 +36,10 @@ clean-libc:
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 # Linking rule
-%.elf: %.o
+%.elf: %.o $(CRT_START) ../libc/libretac.a
 	@echo "Linking $@..."
 	@mkdir -p $(@D)
-	$(CC) -T ../boot/linker.ld -o $@ $< $(LDFLAGS)
+	$(CC) -o $@ $(CRT_START) $< $(LDFLAGS) -no-pie -Wl,-Ttext=0x00100000
 
 # Clean rule
 clean:
@@ -46,4 +49,5 @@ clean:
 crt/init.o: crt/init.c
 sh/shell.o: sh/shell.c
 crt/hello.o: crt/hello.c
+gui/gui.o: gui/gui.c
 test/fat32_test.o: test/fat32_test.c

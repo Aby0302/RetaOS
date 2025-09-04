@@ -15,19 +15,35 @@ fi
 case "$1" in
     "gfx"|"graphics")
         echo "Starting RetaOS with graphics..."
-        qemu-system-i386 -cdrom build/retaos.iso -m 128M -vga std
+        # Attach disk image if present so ATA initrd mount can work
+        if [ -f "build/disk.img" ]; then
+            qemu-system-i386 -cdrom build/retaos.iso -drive file=build/disk.img,format=raw,if=ide,index=0,media=disk -m 128M -vga std
+        else
+            echo "NOTE: build/disk.img not found; running without ATA disk."
+            echo "      Run 'make disk' or 'make all' to create it."
+            qemu-system-i386 -cdrom build/retaos.iso -m 128M -vga std
+        fi
         ;;
     "serial"|"console")
         echo "Starting RetaOS with serial output..."
-        echo "Serial output will be written to /tmp/qemu-serial.log"
-        # Remove any existing log file
-        rm -f /tmp/qemu-serial.log
-        # Start QEMU with serial output to file and console
-        qemu-system-i386 -cdrom build/retaos.iso -m 128M \
-            -serial stdio \
-            -serial file:/tmp/qemu-serial.log \
+        # Create logs directory and pick a timestamped logfile
+        mkdir -p logs
+        TS=$(date +"%d_%m_%Y_%H:%M:%S")
+        LOG_FILE="logs/serial_${TS}.log"
+        echo "Serial output will be logged to $LOG_FILE"
+        # Use a stdio chardev with logfile so output goes to both terminal and file
+        if [ -f "build/disk.img" ]; then
+            DRIVE_ARGS="-drive file=build/disk.img,format=raw,if=ide,index=0,media=disk"
+        else
+            echo "NOTE: build/disk.img not found; running without ATA disk."
+            echo "      Run 'make disk' or 'make all' to create it."
+            DRIVE_ARGS=""
+        fi
+        qemu-system-i386 -cdrom build/retaos.iso ${DRIVE_ARGS} -m 128M \
+            -chardev stdio,id=char0,logfile="${LOG_FILE}",logappend=on \
+            -serial chardev:char0 \
             -monitor none \
-            -nographic
+            -display none
         ;;
     "debug")
         # Create logs directory if it doesn't exist

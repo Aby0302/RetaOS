@@ -56,11 +56,14 @@ static int ata_poll(int check_drq){
 
 static void ata_select_master(void){
     outb(ATA_REG_HDDEVSEL, 0xE0); // 0xE0: master, LBA mode
-    io_wait(); io_wait();
+    // 400ns delay per ATA spec: read ALT/STATUS a few times
+    (void)inb(ATA_REG_STATUS); (void)inb(ATA_REG_STATUS);
+    (void)inb(ATA_REG_STATUS); (void)inb(ATA_REG_STATUS);
 }
 
 static int ata_identify_drive(uint16_t* idbuf){
     ata_select_master();
+    // Clear registers
     outb(ATA_REG_SECCNT, 0);
     outb(ATA_REG_LBA0, 0);
     outb(ATA_REG_LBA1, 0);

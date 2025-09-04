@@ -4,6 +4,7 @@
 #include "include/kernel/console.h"
 #include "include/kernel/console_utils.h"  // For console_printf
 #include "fs/fat32_vfs.h"
+#include "include/drivers/serial.h"
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
@@ -139,9 +140,27 @@ int vfs_mount(const char* path, vfs_node_t* fs_root) {
         return -ENOTDIR;
     }
     
-    // Copy the root node's data to the mount point
+    // If mounting at the global root '/', replace the global vfs_root
+    if (strcmp(path, "/") == 0) {
+        vfs_set_root(fs_root);
+        // If the mounted filesystem has an open function, call it on the real root
+        if (vfs_root.open) {
+            ret = vfs_root.open(&vfs_root, 0);
+            if (ret != 0) {
+                return ret;
+            }
+        }
+        {
+            serial_write("VFS: Mounted root set from fat32 (root name='");
+            serial_write(vfs_root.name);
+            serial_write("')\n");
+        }
+        return 0;
+    }
+
+    // Otherwise, copy the root node's data to the mount point (for non-root mounts)
     memcpy(&mount_point, fs_root, sizeof(vfs_node_t));
-    
+
     // If the mounted filesystem has an open function, call it
     if (mount_point.open) {
         ret = mount_point.open(&mount_point, 0);
@@ -149,7 +168,7 @@ int vfs_mount(const char* path, vfs_node_t* fs_root) {
             return ret;
         }
     }
-    
+
     return 0; // Success
 }
 
@@ -216,6 +235,11 @@ int vfs_lookup(const char* path, vfs_node_t* out_node) {
     // Tokenize the path
     char* saveptr;
     char* component = strtok_r(token, "/", &saveptr);
+    if (component) {
+        serial_write("VFS: lookup path='"); serial_write(path); serial_write("' start component='"); serial_write(component); serial_write("'\n");
+    } else {
+        serial_write("VFS: lookup path has no components\n");
+    }
     
     vfs_node_t current_node;
     memcpy(&current_node, out_node, sizeof(vfs_node_t));
@@ -260,6 +284,7 @@ int vfs_lookup(const char* path, vfs_node_t* out_node) {
         
         // If still not found, return error
         if (ret != 0) {
+            serial_write("VFS: lookup failed at component='"); serial_write(component); serial_write("' for path='"); serial_write(path); serial_write("'\n");
             return -ENOENT;
         }
         
@@ -299,7 +324,8 @@ int vfs_lookup(const char* path, vfs_node_t* out_node) {
             return -EIO; // Error reading symlink
         }
     }
-    
+    // Return the final resolved node
+    memcpy(out_node, &current_node, sizeof(vfs_node_t));
     return 0;
 }
 
@@ -629,6 +655,13 @@ off_t vfs_lseek(int fd, off_t offset, int whence) {
     node->position = new_pos;
     
     return node->position;
+}
+
+int vfs_size(int fd) {
+    if (fd < 0 || fd >= MAX_OPEN_FILES || !open_files[fd].name[0]) {
+        return -EBADF;
+    }
+    return (int)open_files[fd].size;
 }
 
 // Read helper for files

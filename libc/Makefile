@@ -11,7 +11,7 @@ CFLAGS = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra \
          -I./include -I../include -fno-stack-protector -fno-pie -fno-builtin -nostdinc
 
 # Source files
-SRC = src/stdio.c src/string.c src/ctype.c src/stdlib.c src/unistd.c
+SRC = src/stdio.c src/string.c src/unistd.c src/fb.c
 OBJ = $(SRC:.c=.o)
 LIB = libretac.a
 

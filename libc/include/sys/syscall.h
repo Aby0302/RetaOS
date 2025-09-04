@@ -16,6 +16,10 @@ typedef enum {
     SYS_GETPID,
     SYS_GETPPID,
     SYS_SBRK,
+    // --- RetaOS custom extensions (must match kernel values) ---
+    SYS_FB_GETINFO = 240,
+    SYS_FB_FILL    = 241,
+    SYS_FB_RECT    = 242,
     // Diğer syscall'lar...
 } syscall_num_t;
 

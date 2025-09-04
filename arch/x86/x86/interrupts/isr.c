@@ -2,6 +2,7 @@
 #include "../../../../include/arch/x86/io.h"
 #include "../../../../include/arch/x86/isr.h"
 #include "../../../../include/kernel/sched.h"
+#include "../../../../include/kernel/bsod.h"
 #include "../../../../include/kernel/irq.h"
 #include <stdint.h>
 
@@ -10,21 +11,8 @@ void keyboard_irq_handler(void);
 
 static volatile unsigned int ticks = 0;
 
-static void vga_panic_screen(const char* title, const char* msg, uint32_t code, uint32_t addr){
-  volatile uint16_t* vga = (uint16_t*)0xB8000;
-  const int W = 80, H = 25; uint8_t color = (4 << 4) | 15; // red bg, white fg
-  for(int y=0;y<H;y++) for(int x=0;x<W;x++) vga[y*W+x] = ((uint16_t)color<<8) | ' ';
-  const char* p1 = title; int x=2, y=1; while(*p1){ vga[y*W + x++] = ((uint16_t)color<<8) | (uint8_t)*p1++; }
-  const char* p2 = msg;   x=2; y=3; while(*p2){ vga[y*W + x++] = ((uint16_t)color<<8) | (uint8_t)*p2++; }
-  // leave room for more info lines below
-  serial_write("[PANIC] "); serial_write(title); serial_write(" "); serial_write(msg); serial_write("\n");
-  serial_write("code="); serial_write_hex(code); serial_write(" addr="); serial_write_hex(addr); serial_write("\n");
-}
-
 void panic(const char* message){
-  vga_panic_screen("Kernel Panic", message, 0, 0);
-  __asm__ __volatile__("cli");
-  for(;;){ __asm__ __volatile__("hlt"); }
+  kernel_bsod("%s", message);
 }
 
 static void timer_tick(void){
@@ -61,9 +49,7 @@ void exception_handler(uint32_t vector, uint32_t error_code, const struct isr_co
   serial_write("\n");
   if (ctx){ dump_registers(ctx); }
 
-  vga_panic_screen("CPU Exception", "System halted.", error_code, cr2);
-  __asm__ __volatile__("cli");
-  for(;;){ __asm__ __volatile__("hlt"); }
+  kernel_bsod_exception(vector, error_code, ctx, cr2);
 }
 
 // Initialization hook to be called after idt_init()

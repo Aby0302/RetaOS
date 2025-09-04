@@ -1,0 +1,63 @@
+SERIAL
+[DEBUG] Entered kernel_main!
+RetaOS booting in CLI mode...
+[DEBUG] GDT initialized
+[DEBUG] Initialize interrupt handling
+[DEBUG] Initialize IRQ handlers
+[DEBUG] Initialize keyboard
+[DEBUG] Interrupts enabled globally
+[INIT] Memory initialization started
+Parsing multiboot2 tags...
+WARNING: No memory map available, using basic PMM initialization
+Kernel memory: 0x0x0010000C - 0x0x001264F0 (153 KB)
+[INIT] Physical memory manager initialized
+[INIT] Memory initialization completed
+[Paging] Enabled with identity map (4MB) + heap at 0xC0000000 (1MB).
+[DEBUG] Initialize paging
+[DEBUG] Initialize process management
+[DEBUG] Initialize threading system
+[DEBUG] Initialize filesystem
+[INIT] System call initialization started
+[INIT] System call initialization completed
+[DEBUG] Initialize system calls
+[INIT] Mounting root filesystem
+[DEBUG] Mount root filesystem
+[DEBUG] Initialize scheduler
+Initialization complete. Starting scheduler...
+[DEBUG] Creating user init launcher thread
+[tick] 100
+[tick] 200
+[tick] 300
+[tick] 400
+[tick] 500
+[tick] 600
+[KERNEL] ENTER pressed; starting scheduler and shell...
+[DEBUG] Starting scheduler with first thread
+[DEBUG] About to switch to first thread
+[DEBUG] Switching to thread
+[DEBUG] thread_entry called!
+[DEBUG] About to call thread function
+[userinit] Initializing ATA...
+[ATA] hda identified, sectors=
+32768
+[userinit] Mounting initrd from hda (LBA1)...
+[initrd_mount_from_block] Mounting initrd
+[tick] 700
+[initrd] Added directory: ./
+[initrd] Added directory: ./etc/
+[initrd] Added file: motd
+[initrd] Added directory: ./bin/
+[initrd] Added file: init.elf
+[initrd] Added file: gui
+[initrd] Added file: sh
+[initrd] Added file: demo.txt
+[initrd] Mounted as root filesystem
+[initrd_mount_from_block] Initrd mounted successfully
+[userinit] Trying elf_exec /bin/init.elf
+VFS: lookup path='/bin/init.elf' start component='bin'
+VFS: lookup path='/bin/init.elf' start component='bin'
+[elf_exec] Failed to open file
+[userinit] Trying elf_exec /bin/sh
+VFS: lookup path='/bin/sh' start component='bin'
+VFS: lookup path='/bin/sh' start component='bin'
+[elf_exec] Failed to open file

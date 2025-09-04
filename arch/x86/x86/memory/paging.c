@@ -9,6 +9,8 @@
 
 static uint32_t __attribute__((aligned(4096))) page_directory[1024];
 static uint32_t __attribute__((aligned(4096))) first_page_table[1024];
+// Map the kernel heap high region (e.g., 0xC0000000..)
+static uint32_t __attribute__((aligned(4096))) heap_page_table[1024];
 
 extern void* kmalloc(unsigned long size);
 
@@ -18,11 +20,19 @@ void paging_init(void){
     // Zero PD and PT
     for (int i = 0; i < 1024; ++i){ page_directory[i] = 0; first_page_table[i] = 0; }
 
-    // Identity-map first 4MB
+    // Identity-map first 4MB as user-accessible so simple userspace can run
     for (int i = 0; i < 1024; ++i){
-        first_page_table[i] = (i * 0x1000) | PAGE_PRESENT | PAGE_RW;
+        first_page_table[i] = (i * 0x1000) | PAGE_PRESENT | PAGE_RW | PAGE_USER;
     }
-    page_directory[0] = ((uint32_t)first_page_table) | PAGE_PRESENT | PAGE_RW;
+    page_directory[0] = ((uint32_t)first_page_table) | PAGE_PRESENT | PAGE_RW | PAGE_USER;
+
+    // Map a 1MB kernel heap at virtual 0xC0000000 to physical 4MB..5MB
+    // PDE index for 0xC0000000 is 0x300
+    for (int i = 0; i < 256; ++i) { // 256 * 4KB = 1MB
+        heap_page_table[i] = ((0x400000 + (i * 0x1000)) & ~0xFFFu) | PAGE_PRESENT | PAGE_RW; // supervisor RW
+    }
+    for (int i = 256; i < 1024; ++i) heap_page_table[i] = 0; // clear rest
+    page_directory[0x300] = ((uint32_t)heap_page_table) | PAGE_PRESENT | PAGE_RW;
 
     // Load CR3
     __asm__ __volatile__("mov %0, %%cr3" :: "r"(page_directory));
@@ -33,7 +43,7 @@ void paging_init(void){
     cr0 |= 0x80000000u; // PG
     __asm__ __volatile__("mov %0, %%cr0" :: "r"(cr0));
 
-    serial_write("[Paging] Enabled with identity map (4MB).\n");
+    serial_write("[Paging] Enabled with identity map (4MB) + heap at 0xC0000000 (1MB).\n");
 }
 
 // Map a single 4KB page at 'virt' to 'phys' with RW kernel perms

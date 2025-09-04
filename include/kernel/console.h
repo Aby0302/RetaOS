@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
 
 // Console colors
 #define CONSOLE_COLOR_BLACK         0x0
@@ -50,5 +51,6 @@ void console_set_color(uint8_t fg, uint8_t bg);
 void console_scroll(void);
 void console_put_hex(uint32_t n);
 void console_put_dec(uint32_t n);
+void kprintf(const char* fmt, ...);
 
 #endif // _KERNEL_CONSOLE_H

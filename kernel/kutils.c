@@ -29,11 +29,7 @@ void* memset(void* dest, int c, size_t n) {
 // kprintf is now implemented in kernel.c
 
 // Simple vfs_size implementation (placeholder)
-int vfs_size(int fd) {
-    // TODO: Implement proper vfs_size function
-    (void)fd;
-    return 0x10000; // Return a default size
-}
+// vfs_size now implemented in vfs.c
 
 
 

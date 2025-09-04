@@ -127,14 +127,22 @@ int process_exec(process_t* proc, const char* path) {
     
     // Open the file
     int fd = vfs_open(path, 0);
+    extern void serial_write(const char*);
+    serial_write("[process_exec] open: "); serial_write(path); serial_write("\r\n");
     if (fd < 0) {
+        serial_write("[process_exec] vfs_open failed\r\n");
         //kprintf("[process] Failed to open file: %s\n", path);
         return -1;
     }
     
     // Get file size
     size_t size = vfs_size(fd);
+    {
+        extern void serial_write_hex(uint32_t);
+        serial_write("[process_exec] size=0x"); serial_write_hex((uint32_t)size); serial_write("\r\n");
+    }
     if (size == 0) {
+        serial_write("[process_exec] size==0\r\n");
         vfs_close(fd);
         //kprintf("[process] Empty file: %s\n", path);
         return -1;
@@ -148,7 +156,10 @@ int process_exec(process_t* proc, const char* path) {
         return -1;
     }
     
-    if (vfs_read(fd, file_data, size) != size) {
+    ssize_t r = vfs_read(fd, file_data, size);
+    if (r != (ssize_t)size) {
+        extern void serial_write_dec(uint32_t);
+        serial_write("[process_exec] vfs_read got "); serial_write_dec((uint32_t)r); serial_write(" bytes\r\n");
         kfree(file_data);
         vfs_close(fd);
         //kprintf("[process] Failed to read file: %s\n", path);
@@ -162,6 +173,7 @@ int process_exec(process_t* proc, const char* path) {
     kfree(file_data);
     
     if (!entry) {
+        serial_write("[process_exec] elf_load failed\r\n");
         //kprintf("[process] Failed to load ELF: %s\n", path);
         return -1;
     }
@@ -170,26 +182,20 @@ int process_exec(process_t* proc, const char* path) {
     memset(&proc->uc, 0, sizeof(proc->uc));
     proc->uc.eip = (uint32_t)entry;
     proc->uc.eflags = 0x200; // IF=1
-    proc->uc.cs = 0x1B;       // Kullanıcı kodu segmenti (RPL=3)
-    proc->uc.ss = 0x23;       // Kullanıcı veri segmenti (RPL=3)
-    proc->uc.ds = 0x23;
-    proc->uc.es = 0x23;
-    proc->uc.fs = 0x23;
-    proc->uc.gs = 0x23;
+    proc->uc.cs = 0x23;       // User code selector (GDT entry 4, RPL=3)
+    proc->uc.ss = 0x2B;       // User data selector (GDT entry 5, RPL=3)
+    proc->uc.ds = 0x2B;
+    proc->uc.es = 0x2B;
+    proc->uc.fs = 0x2B;
+    proc->uc.gs = 0x2B;
     
     // Set up user stack (1MB area)
-    uint32_t user_stack_top = 0xE0000000; // Around 3.5GB
-    uint32_t user_stack_size = 0x100000;  // 1MB stack
+    // Keep stack within identity-mapped 0..4MB area for now
+    uint32_t user_stack_top = 0x003FF000; // just below 4MB
+    uint32_t user_stack_size = 0x20000;   // 128KB stack
     
     // Map user stack pages
-    for (uint32_t i = 0; i < user_stack_size; i += 0x1000) {
-        void* phys = kmalloc_a(0x1000);
-        if (!phys) {
-            //kprintf("[process] Out of memory for user stack\n");
-            return -1;
-        }
-        map_page(proc->page_dir, (void*)(user_stack_top + i), phys, 1);
-    }
+    // Identity map for first 4MB already present; explicit mapping skipped for now
     
     proc->uc.esp = user_stack_top + user_stack_size - 16; // Stack top
     proc->state = PROC_READY;

@@ -17,18 +17,18 @@ static ssize_t fat32_write(vfs_node_t* node, uint32_t offset, const void* buffer
 static int fat32_open(vfs_node_t* node, uint32_t flags);
 static int fat32_close(vfs_node_t* node);
 static vfs_dirent_t fat32_vfs_readdir(vfs_node_t* node, uint32_t index);
-static int fat32_finddir(vfs_node_t* node, const char* name, vfs_node_t* out_node);
+static int fat32_finddir(vfs_node_t* node, const char* name, vfs_node_t** out_node);
 
 // Private data structure for FAT32 file handles
 typedef struct {
-    uint32_t first_cluster;
+    uint32_t cluster;
     uint32_t size;
     uint32_t pos;
     uint8_t is_dir;
 } fat32_file_private_t;
 
 // Create a new VFS node for a FAT32 file/directory
-static vfs_node_t* fat32_create_node(const char* name, uint32_t size, int is_dir, uint32_t first_cluster) {
+static vfs_node_t* fat32_create_node(const char* name, uint32_t size, int is_dir, uint32_t cluster) {
     vfs_node_t node = {0};
 
 
@@ -50,7 +50,7 @@ static vfs_node_t* fat32_create_node(const char* name, uint32_t size, int is_dir
         return NULL; // Return NULL on error
     }
 
-    priv->first_cluster = first_cluster;
+    priv->cluster = cluster;
     priv->size = size;
     priv->pos = 0;
     priv->is_dir = is_dir;
@@ -84,7 +84,7 @@ static ssize_t fat32_read(vfs_node_t* node, uint32_t offset, void* buffer, size_
     }
 
     // Call the FAT32 read function with the correct signature
-    ssize_t bytes_read = fat32_read_file_data(priv->first_cluster, offset, buffer, size);
+    ssize_t bytes_read = fat32_read_file_data(priv->cluster, offset, buffer, size);
     if (bytes_read < 0) {
         console_puts("FAT32: Read error\n");
         return bytes_read;
@@ -157,7 +157,7 @@ static vfs_dirent_t fat32_vfs_readdir(vfs_node_t* node, uint32_t index) {
     }
 
     // Regular entries (index - 2 because of . and ..)
-    if (fat32_readdir_index(priv->first_cluster, index - 2, &dir_entry) != 0) {
+    if (fat32_readdir_index(priv->cluster, index - 2, &dir_entry) != 0) {
         vfs_dirent_t empty = {0};
         return empty;
     }
@@ -170,8 +170,11 @@ static vfs_dirent_t fat32_vfs_readdir(vfs_node_t* node, uint32_t index) {
     return dirent;
 }
 
-// Find a directory entry by name
-static int fat32_finddir(vfs_node_t* node, const char* name, vfs_node_t* out_node) {
+// Update the function signature to match finddir_type_t
+// typedef int (*finddir_type_t)(vfs_node_t*, const char*, vfs_node_t**);
+
+// Update fat32_finddir implementation
+static int fat32_finddir(vfs_node_t* node, const char* name, vfs_node_t** out_node) {
     if (!node || !node->priv || !name || !out_node) return -EINVAL;
 
     fat32_file_private_t* priv = (fat32_file_private_t*)node->priv;
@@ -179,13 +182,13 @@ static int fat32_finddir(vfs_node_t* node, const char* name, vfs_node_t* out_nod
 
     // Handle special entries
     if (strcmp(name, ".") == 0) {
-        *out_node = *node;
+        *out_node = node; // Updated to dereference out_node
         return 0;
     }
     if (strcmp(name, "..") == 0) {
         vfs_node_t* root = vfs_get_root();
         if (root) {
-            *out_node = *root;
+            *out_node = root; // Updated to dereference out_node
             return 0;
         }
         return -ENOENT;
@@ -193,14 +196,12 @@ static int fat32_finddir(vfs_node_t* node, const char* name, vfs_node_t* out_nod
 
     // Search for the entry
     fat32_dir_t dir_entry;
-    if (fat32_find_entry(priv->first_cluster, name, &dir_entry) != 0) {
+    if (fat32_find_entry(priv->cluster, name, &dir_entry) != 0) {
         return -ENOENT;
     }
 
     bool is_dir = (dir_entry.attributes & ATTR_DIRECTORY) != 0;
-    vfs_node_t* new_node_ptr = fat32_create_node(dir_entry.name, dir_entry.size, is_dir, dir_entry.cluster);
-    if (!new_node_ptr) return -ENOMEM;
-    *out_node = *new_node_ptr;
+    *out_node = fat32_create_node(name, dir_entry.size, is_dir, dir_entry.cluster); // Updated field
     return 0;
 }
 

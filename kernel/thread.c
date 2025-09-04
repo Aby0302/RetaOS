@@ -11,6 +11,7 @@
 #define ASM_VOLATILE(...) __asm__ __volatile__(__VA_ARGS__)
 
 // Forward declarations
+#include <kernel/bsod.h>
 void panic(const char* msg);
 void kprintf(const char* fmt, ...);
 
@@ -217,13 +218,14 @@ void threading_init(void) {
     // Create main thread
     current_thread = (thread_t*)kmalloc(sizeof(thread_t));
     if (!current_thread) {
-        panic("Failed to initialize main thread");
+        kernel_bsod("Failed to initialize main thread");
     }
     
     // Initialize main thread
     memset(current_thread, 0, sizeof(thread_t));
     current_thread->tid = next_tid++;
-    current_thread->state = THREAD_READY;
+    // Bootstrap thread represents the current kernel context; mark as RUNNING
+    current_thread->state = THREAD_RUNNING;
     current_thread->process = process_current();
     current_thread->time_slice = rr_quantum;
     
@@ -232,7 +234,7 @@ void threading_init(void) {
     current_thread->stack_base = kmalloc(current_thread->stack_size);
     if (!current_thread->stack_base) {
         kfree(current_thread);
-        panic("Failed to allocate stack for main thread");
+        kernel_bsod("Failed to allocate stack for main thread");
     }
     
     // Set up initial stack pointer
@@ -241,8 +243,10 @@ void threading_init(void) {
     // Add to thread list
     thread_list = current_thread;
     
-    // Add main thread to scheduler's ready queue
-    sched_add_thread(current_thread);
-    
+    // Do NOT enqueue bootstrap thread into ready queue; scheduler will start
+    // with the first real kernel/user thread created later.
     console_puts("[thread] Threading system initialized\n");
 }
+
+// Expose head of thread list for diagnostics
+thread_t* thread_list_head(void) { return thread_list; }
